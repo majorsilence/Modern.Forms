@@ -44,6 +44,11 @@ namespace Modern.Forms
                 return args.Cancel;
             };
 
+            // On macOS, defer to the native window chrome (traffic-light buttons on the left,
+            // native drag-to-move, native resize handles) instead of the custom FormTitleBar.
+            if (OperatingSystem.IsMacOS ())
+                UseSystemDecorations = true;
+
             Window.Resize (new Size (DefaultSize.Width, DefaultSize.Height));
         }
 
