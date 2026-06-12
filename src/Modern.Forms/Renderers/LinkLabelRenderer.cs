@@ -65,14 +65,15 @@ namespace Modern.Forms.Renderers
         {
             EnsureLayoutCache (control);
 
-            using var paint = CreatePaint (control);
-            var metrics = paint.FontMetrics;
+            using var font = CreateFont (control);
+            var metrics = font.Metrics;
             var line_height = (float)Math.Ceiling (metrics.Descent - metrics.Ascent + metrics.Leading);
             var baseline_offset = -metrics.Ascent;
 
             var lines = BuildLines (control.Text ?? string.Empty);
-            var line_rectangles = MeasureLines (paint, lines, layout.TextBounds, line_height, control.TextAlign);
+            var line_rectangles = MeasureLines (font, lines, layout.TextBounds, line_height, control.TextAlign);
 
+            using var paint = new SKPaint { IsAntialias = true };
             var current_index = 0;
 
             for (var line_index = 0; line_index < lines.Count; line_index++) {
@@ -84,17 +85,15 @@ namespace Modern.Forms.Renderers
 
                 for (var i = 0; i < line.Length; i++) {
                     var character = line[i].ToString ();
-                    var width = Math.Max (1f, paint.MeasureText (character));
+                    var width = Math.Max (1f, font.MeasureText (character));
 
                     var text_index = current_index + i;
                     var link = GetLinkAtIndex (control, text_index);
                     var bounds = Rectangle.Round (new RectangleF (x, line_rect.Top, width, line_height));
 
                     if (link is not null) {
-                        var color = control.ResolveLinkColor (link);
-                        paint.Color = color;
-
-                        e.Canvas.DrawText (character, x, baseline, paint);
+                        paint.Color = control.ResolveLinkColor (link);
+                        e.Canvas.DrawText (character, x, baseline, SKTextAlign.Left, font, paint);
 
                         if (control.ShouldUnderline (link)) {
                             var underline_offset = Math.Max (1, control.LogicalToDeviceUnits (1));
@@ -106,7 +105,7 @@ namespace Modern.Forms.Renderers
                             ? (control.Style.ForegroundColor ?? Theme.ForegroundColor)
                             : Theme.ForegroundDisabledColor;
 
-                        e.Canvas.DrawText (character, x, baseline, paint);
+                        e.Canvas.DrawText (character, x, baseline, SKTextAlign.Left, font, paint);
                     }
 
                     x += width;
@@ -126,13 +125,13 @@ namespace Modern.Forms.Renderers
 
             control.Links.ClearVisualBounds ();
 
-            using var paint = CreatePaint (control);
-            var metrics = paint.FontMetrics;
+            using var font = CreateFont (control);
+            var metrics = font.Metrics;
             var line_height = (float)Math.Ceiling (metrics.Descent - metrics.Ascent + metrics.Leading);
 
             var layout = LayoutTextAndImage (control);
             var lines = BuildLines (control.Text ?? string.Empty);
-            var line_rectangles = MeasureLines (paint, lines, layout.TextBounds, line_height, control.TextAlign);
+            var line_rectangles = MeasureLines (font, lines, layout.TextBounds, line_height, control.TextAlign);
 
             var current_index = 0;
 
@@ -144,7 +143,7 @@ namespace Modern.Forms.Renderers
 
                 for (var i = 0; i < line.Length; i++) {
                     var character = line[i].ToString ();
-                    var width = Math.Max (1f, paint.MeasureText (character));
+                    var width = Math.Max (1f, font.MeasureText (character));
                     var text_index = current_index + i;
 
                     var link = GetLinkAtIndex (control, text_index);
@@ -165,13 +164,10 @@ namespace Modern.Forms.Renderers
             control.ValidateLayout ();
         }
 
-        private static SKPaint CreatePaint (LinkLabel control)
+        private static SKFont CreateFont (LinkLabel control)
         {
-            return new SKPaint {
-                IsAntialias = true,
-                Typeface = control.CurrentStyle.GetFont (),
-                TextSize = control.LogicalToDeviceUnits (control.CurrentStyle.GetFontSize ())
-            };
+            return new SKFont (control.CurrentStyle.GetFont (),
+                control.LogicalToDeviceUnits (control.CurrentStyle.GetFontSize ()));
         }
 
         private static List<string> BuildLines (string text)
@@ -194,7 +190,7 @@ namespace Modern.Forms.Renderers
         }
 
         private static List<RectangleF> MeasureLines (
-            SKPaint paint,
+            SKFont font,
             List<string> lines,
             Rectangle available_bounds,
             float line_height,
@@ -210,7 +206,7 @@ namespace Modern.Forms.Renderers
             };
 
             for (var i = 0; i < lines.Count; i++) {
-                var width = paint.MeasureText (lines[i]);
+                var width = font.MeasureText (lines[i]);
                 var x = alignment switch {
                     ContentAlignment.TopCenter or ContentAlignment.MiddleCenter or ContentAlignment.BottomCenter => available_bounds.Left + ((available_bounds.Width - width) / 2f),
                     ContentAlignment.TopRight or ContentAlignment.MiddleRight or ContentAlignment.BottomRight => available_bounds.Right - width,

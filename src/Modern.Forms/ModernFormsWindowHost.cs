@@ -27,7 +27,7 @@ namespace Modern.Forms
     ///
     /// Rendering strategy: a <see cref="WriteableBitmap"/> is locked each frame,
     /// Skia draws the Modern.Forms scene directly into the framebuffer, and an
-    /// <see cref="Image"/> control displays the result. This mirrors the original
+    /// <see cref="Avalonia.Controls.Image"/> control displays the result. This mirrors the original
     /// native-framebuffer approach and is reliable across all Avalonia 12 platforms.
     /// </summary>
     internal class ModernFormsWindowHost : Window
@@ -42,9 +42,6 @@ namespace Modern.Forms
         private readonly AvImage _surface;
         private DispatcherTimer? _renderTimer;
 
-        // Track last-known adapter dimensions so we can detect window-resize repaints.
-        private int _lastAdapterW, _lastAdapterH;
-
         // Set by InvalidateVisual() calls so the timer knows to repaint.
         internal bool IsDirty = true;
 
@@ -54,7 +51,7 @@ namespace Modern.Forms
 
             // Modern.Forms draws its own decorations on Windows/Linux.
             // macOS uses native chrome (set in Form constructor).
-            SystemDecorations = WindowDecorations.None;
+            WindowDecorations = WindowDecorations.None;
             ExtendClientAreaToDecorationsHint = true;
 
             // Surface image fills the window. Stretch = Fill maps the framebuffer

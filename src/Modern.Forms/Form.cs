@@ -36,7 +36,7 @@ namespace Modern.Forms
             TitleBar = Controls.AddImplicitControl (new FormTitleBar ());
 
             Resizeable = true;
-            host.SystemDecorations = WindowDecorations.None;
+            host.WindowDecorations = WindowDecorations.None;
             host.ExtendClientAreaToDecorationsHint = true;
 
             host.Closing += (s, e) => {
@@ -421,6 +421,39 @@ namespace Modern.Forms
         /// <summary>Gets or sets the binding context. No-op in Modern.Forms.</summary>
         public object? BindingContext { get; set; }
 
+        /// <summary>Gets or sets the border style of the form (stub — actual decoration is controlled by UseSystemDecorations).</summary>
+        public FormBorderStyle FormBorderStyle { get; set; } = FormBorderStyle.Sizable;
+
+        /// <summary>Gets or sets whether a maximize button appears in the title bar.</summary>
+        public bool MaximizeBox {
+            get => AvWindow.CanResize;
+            set => AvWindow.CanResize = value;
+        }
+
+        /// <summary>Gets or sets whether a minimize button appears in the title bar.</summary>
+        public bool MinimizeBox { get; set; } = true;
+
+        /// <summary>Gets or sets whether the form is displayed in the taskbar.</summary>
+        public bool ShowInTaskbar {
+            get => AvWindow.ShowInTaskbar;
+            set => AvWindow.ShowInTaskbar = value;
+        }
+
+        /// <summary>Gets or sets whether the form is displayed on top of all other windows.</summary>
+        public bool TopMost {
+            get => AvWindow.Topmost;
+            set => AvWindow.Topmost = value;
+        }
+
+        /// <summary>Gets or sets the size-grip style for the form (stub).</summary>
+        public SizeGripStyle SizeGripStyle { get; set; } = SizeGripStyle.Auto;
+
+        /// <summary>Gets or sets the form opacity (0.0 = transparent, 1.0 = opaque).</summary>
+        public double Opacity {
+            get => AvWindow.Opacity;
+            set => AvWindow.Opacity = value;
+        }
+
         /// <inheritdoc/>
         public override ControlStyle Style { get; } = new ControlStyle (DefaultStyle);
 
@@ -453,7 +486,7 @@ namespace Modern.Forms
                     use_system_decorations = value;
                     TitleBar.Visible = !use_system_decorations;
                     Style.Border.Width = use_system_decorations ? 0 : 1;
-                    AvWindow.SystemDecorations = value ? WindowDecorations.Full : WindowDecorations.None;
+                    AvWindow.WindowDecorations = value ? WindowDecorations.Full : WindowDecorations.None;
                     AvWindow.ExtendClientAreaToDecorationsHint = !value;
                 }
             }

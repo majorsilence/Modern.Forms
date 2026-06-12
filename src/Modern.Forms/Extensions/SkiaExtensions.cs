@@ -44,7 +44,7 @@ namespace Modern.Forms
         /// </summary>
         public static void DrawBitmap (this SKCanvas canvas, SKBitmap bitmap, Rectangle rect, bool disabled = false)
         {
-            using var paint = new SKPaint { FilterQuality = SKFilterQuality.High };
+            using var paint = new SKPaint ();
 
             if (disabled)
                 paint.ColorFilter = disabled_matrix;
@@ -57,7 +57,7 @@ namespace Modern.Forms
         /// </summary>
         public static void DrawBitmap (this SKCanvas canvas, SKBitmap bitmap, float x, float y, bool disabled = false)
         {
-            using var paint = new SKPaint { FilterQuality = SKFilterQuality.High };
+            using var paint = new SKPaint ();
 
             if (disabled)
                 paint.ColorFilter = disabled_matrix;

@@ -17,7 +17,7 @@ namespace Modern.Forms
         }
 
         /// <summary>Gets or sets the selected time value.</summary>
-        public new DateTime? Value {
+        public DateTime? Value {
             get {
                 if (DateTime.TryParse (Text, out var dt))
                     return dt;

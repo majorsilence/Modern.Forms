@@ -928,6 +928,15 @@ namespace Modern.Forms
             // Update hovered row
             var row = GetRowAtLocation (e.Location);
             HoveredRowIndex = row;
+
+            // Fire CellToolTipTextNeeded if handlers are attached
+            if (CellToolTipTextNeeded != null && row >= 0) {
+                var col = GetColumnAtLocation (e.Location);
+                if (col >= 0) {
+                    var args = new DataGridViewCellToolTipTextNeededEventArgs (col, row);
+                    CellToolTipTextNeeded?.Invoke (this, args);
+                }
+            }
         }
 
         /// <inheritdoc/>

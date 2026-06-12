@@ -30,6 +30,40 @@ namespace Modern.Forms
 
 
     /// <summary>
+    /// Specifies the border style of a form.
+    /// </summary>
+    public enum FormBorderStyle
+    {
+        /// <summary>No border.</summary>
+        None,
+        /// <summary>Fixed single-line border.</summary>
+        FixedSingle,
+        /// <summary>Fixed 3D border.</summary>
+        Fixed3D,
+        /// <summary>Fixed dialog-style border.</summary>
+        FixedDialog,
+        /// <summary>Sizable border (default).</summary>
+        Sizable,
+        /// <summary>Fixed tool window border.</summary>
+        FixedToolWindow,
+        /// <summary>Sizable tool window border.</summary>
+        SizableToolWindow
+    }
+
+    /// <summary>
+    /// Specifies the size-grip style for a form.
+    /// </summary>
+    public enum SizeGripStyle
+    {
+        /// <summary>Show the size grip when applicable.</summary>
+        Auto,
+        /// <summary>Always show the size grip.</summary>
+        Show,
+        /// <summary>Never show the size grip.</summary>
+        Hide
+    }
+
+    /// <summary>
     /// Specifies how a form scales its contents.
     /// </summary>
     public enum AutoScaleMode

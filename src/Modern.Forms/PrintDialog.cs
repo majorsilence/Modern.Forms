@@ -1,0 +1,69 @@
+using System.Drawing;
+using Modern.Forms.Printing;
+
+namespace Modern.Forms
+{
+    /// <summary>
+    /// Represents a dialog for configuring print settings.
+    /// Simplified implementation — shows no UI, returns OK immediately.
+    /// </summary>
+    public class PrintDialog : Form
+    {
+        /// <summary>Gets or sets the PrintDocument to configure.</summary>
+        public PrintDocument? Document { get; set; }
+
+        /// <summary>Gets or sets the printer settings.</summary>
+        public PrinterSettings PrinterSettings {
+            get => Document?.PrinterSettings ?? new PrinterSettings ();
+            set {
+                if (Document != null)
+                    Document.PrinterSettings = value;
+            }
+        }
+
+        /// <summary>Gets or sets whether the print-to-file option is shown.</summary>
+        public bool AllowPrintToFile { get; set; } = true;
+
+        /// <summary>Gets or sets whether the page-range controls are enabled.</summary>
+        public bool AllowSomePages { get; set; }
+
+        /// <summary>Shows the print dialog and returns OK (stub — no UI is displayed).</summary>
+        public new DialogResult ShowDialog () => DialogResult.OK;
+    }
+
+    /// <summary>
+    /// Represents a dialog for previewing documents before printing.
+    /// Stub implementation — opens the generated PDF file externally.
+    /// </summary>
+    public class PrintPreviewDialog : Form
+    {
+        /// <summary>Gets or sets the PrintDocument to preview.</summary>
+        public PrintDocument? Document { get; set; }
+
+        /// <inheritdoc/>
+        public new DialogResult ShowDialog ()
+        {
+            if (Document != null) {
+                var pdf = Document.Print ();
+                System.Diagnostics.Process.Start (new System.Diagnostics.ProcessStartInfo (pdf) { UseShellExecute = true });
+            }
+
+            return DialogResult.OK;
+        }
+    }
+
+    /// <summary>
+    /// Represents a control that renders a print-preview of a document.
+    /// </summary>
+    public class PrintPreviewControl : Control
+    {
+        /// <summary>Gets or sets the PrintDocument to preview.</summary>
+        public PrintDocument? Document { get; set; }
+
+        /// <summary>Gets or sets the zoom level (1.0 = 100%).</summary>
+        public double Zoom { get; set; } = 0.3;
+
+        /// <inheritdoc/>
+        public override ControlStyle Style { get; } = new ControlStyle (Control.DefaultStyle);
+    }
+}

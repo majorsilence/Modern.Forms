@@ -62,7 +62,7 @@ namespace Modern.Forms
         public DateTime MaxDate { get; set; } = new DateTime (9998, 12, 31);
 
         /// <summary>Gets or sets the current date/time value.</summary>
-        public new DateTime Value {
+        public DateTime Value {
             get {
                 if (DateTime.TryParse (Text, out var parsed))
                     return parsed;
