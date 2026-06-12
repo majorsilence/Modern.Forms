@@ -1,5 +1,5 @@
-﻿using System.ComponentModel;
-using Modern.WindowKit.Threading;
+using System.ComponentModel;
+using Avalonia.Threading;
 
 namespace Modern.Forms
 {
@@ -8,13 +8,6 @@ namespace Modern.Forms
     /// This timer is intended for UI-related scenarios and raises its <see cref="Tick"/>
     /// event on the UI thread.
     /// </summary>
-    /// <remarks>
-    /// Use this component when periodic work must be performed on the UI thread,
-    /// such as updating UI state, animations, or scheduling lightweight tasks.
-    ///
-    /// This timer uses <see cref="DispatcherTimer"/> internally and is therefore
-    /// integrated with the current UI dispatcher.
-    /// </remarks>
     public class Timer : Component
     {
         private DispatcherTimer? dispatcherTimer;
@@ -59,9 +52,6 @@ namespace Modern.Forms
         /// <summary>
         /// Gets or sets the time, in milliseconds, between timer ticks.
         /// </summary>
-        /// <exception cref="ArgumentOutOfRangeException">
-        /// Thrown when the value is less than 1.
-        /// </exception>
         [DefaultValue (100)]
         public int Interval {
             get => interval;
@@ -91,7 +81,6 @@ namespace Modern.Forms
         /// <summary>
         /// Raises the <see cref="Tick"/> event.
         /// </summary>
-        /// <param name="e">An <see cref="EventArgs"/> that contains the event data.</param>
         protected virtual void OnTick (EventArgs e)
         {
             onTimer?.Invoke (this, e);
@@ -118,12 +107,7 @@ namespace Modern.Forms
             OnTick (EventArgs.Empty);
         }
 
-        /// <summary>
-        /// Releases the resources used by the <see cref="Timer"/>.
-        /// </summary>
-        /// <param name="disposing">
-        /// <see langword="true"/> to release managed resources; otherwise, <see langword="false"/>.
-        /// </param>
+        /// <inheritdoc/>
         protected override void Dispose (bool disposing)
         {
             if (disposing) {
@@ -141,13 +125,7 @@ namespace Modern.Forms
             base.Dispose (disposing);
         }
 
-        /// <summary>
-        /// Returns a string that represents the current timer.
-        /// </summary>
-        /// <returns>A string containing the type name and interval.</returns>
-        public override string ToString ()
-        {
-            return $"{base.ToString ()}, Interval: {Interval}";
-        }
+        /// <inheritdoc/>
+        public override string ToString () => $"{base.ToString ()}, Interval: {Interval}";
     }
 }

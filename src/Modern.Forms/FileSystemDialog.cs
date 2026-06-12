@@ -1,5 +1,3 @@
-﻿using Modern.WindowKit.Platform.Storage.FileIO;
-
 namespace Modern.Forms
 {
     /// <summary>
@@ -17,14 +15,10 @@ namespace Modern.Forms
         /// </summary>
         public string Title { get; set; } = string.Empty;
 
-        internal BclStorageFolder? GetInitialDirectory ()
+        internal string? GetInitialDirectory ()
         {
-            if (InitialDirectory is not null) {
-                var dir_info = new DirectoryInfo (InitialDirectory);
-
-                if (dir_info.Exists)
-                    return new BclStorageFolder (dir_info);
-            }
+            if (InitialDirectory is not null && Directory.Exists (InitialDirectory))
+                return Path.GetFullPath (InitialDirectory);
 
             return null;
         }

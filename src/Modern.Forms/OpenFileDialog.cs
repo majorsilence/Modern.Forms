@@ -1,4 +1,4 @@
-﻿using Modern.WindowKit.Platform.Storage;
+using Avalonia.Platform.Storage;
 
 namespace Modern.Forms
 {
@@ -15,30 +15,32 @@ namespace Modern.Forms
         /// <summary>
         /// Shows the dialog to the user.
         /// </summary>
-        /// <param name="owner">The window that owns this dialog.</param>
         public async Task<DialogResult> ShowDialog (Form owner)
         {
-            if (owner.window.TryGetFeature (typeof (IStorageProvider)) is IStorageProvider parent) {
-                var options = new FilePickerOpenOptions {
-                    AllowMultiple = AllowMultiple,
-                    SuggestedStartLocation = GetInitialDirectory (),
-                    Title = Title,
-                    FileTypeFilter = filters
-                };
+            var parent = owner.AvWindow.StorageProvider;
 
-                var result = await parent.OpenFilePickerAsync (options);
+            IStorageFolder? startLocation = null;
+            var initPath = GetInitialDirectory ();
+            if (initPath is not null)
+                startLocation = await parent.TryGetFolderFromPathAsync (new Uri (initPath));
 
-                FileNames.Clear ();
+            var options = new FilePickerOpenOptions {
+                AllowMultiple = AllowMultiple,
+                SuggestedStartLocation = startLocation,
+                Title = Title,
+                FileTypeFilter = filters
+            };
 
-                var files = result.Select (f => f.GetFullPath ()).WhereNotNull ();
+            var result = await parent.OpenFilePickerAsync (options);
 
-                if (files.Any ())
-                    FileNames.AddRange (files);
+            FileNames.Clear ();
 
-                return FileNames.Count > 0 ? DialogResult.OK : DialogResult.Cancel;
-            }
+            var files = result.Select (f => f.GetFullPath ()).WhereNotNull ();
 
-            throw new ArgumentException ("Owner does not support system dialogs.");
+            if (files.Any ())
+                FileNames.AddRange (files);
+
+            return FileNames.Count > 0 ? DialogResult.OK : DialogResult.Cancel;
         }
     }
 }

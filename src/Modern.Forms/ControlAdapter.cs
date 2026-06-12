@@ -35,14 +35,15 @@ namespace Modern.Forms
             // This could probably eliminated in the future with Canvas.Translate.
             var form_border = ParentForm.CurrentStyle.Border;
 
-            var form_x = form_border.Left.GetWidth ();
-            var form_y = form_border.Top.GetWidth ();
+            var scaling = Scaling;
+            var form_x = (int)(form_border.Left.GetWidth () * scaling);
+            var form_y = (int)(form_border.Top.GetWidth ()  * scaling);
 
             foreach (var control in Controls.GetAllControls ().Where (c => c.Visible).ToArray ()) {
                 if (control.Width <= 0 || control.Height <= 0)
                     continue;
 
-                var info = new SKImageInfo (control.Width, control.Height, SKImageInfo.PlatformColorType, SKAlphaType.Premul);
+                var info = new SKImageInfo (control.ScaledSize.Width, control.ScaledSize.Height, SKImageInfo.PlatformColorType, SKAlphaType.Premul);
                 var buffer = control.GetBackBuffer ();
 
                 if (control.NeedsPaint) {

@@ -1,5 +1,5 @@
-﻿using Modern.WindowKit;
-using Modern.WindowKit.Threading;
+using Avalonia.Input;
+using Avalonia.Threading;
 
 namespace Modern.Forms
 {
@@ -82,6 +82,7 @@ namespace Modern.Forms
         /// <param name="mainForm">A Form that represents the form to make visible.</param>
         public static void Run (Form mainForm)
         {
+            AvaloniaBootstrap.EnsureInitialized ();
             AvaloniaSynchronizationContext.InstallIfNeeded ();
 
             mainForm.Show ();
@@ -97,6 +98,7 @@ namespace Modern.Forms
             if (_mainLoopCancellationTokenSource != null)
                 throw new InvalidOperationException ("Run should only be called once");
 
+            AvaloniaBootstrap.EnsureInitialized ();
             AvaloniaSynchronizationContext.InstallIfNeeded ();
             closable.Closed += (s, e) => Exit ();
 

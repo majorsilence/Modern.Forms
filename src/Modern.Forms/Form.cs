@@ -1,8 +1,7 @@
-﻿using System.ComponentModel;
-using Modern.WindowKit;
-using Modern.WindowKit.Controls;
-using Modern.WindowKit.Input;
-using Modern.WindowKit.Platform;
+using System.ComponentModel;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
 using SkiaSharp;
 
 namespace Modern.Forms
@@ -15,7 +14,7 @@ namespace Modern.Forms
         // If the border is only 1 pixel it's too hard to resize, so we may steal some pixels from the client area
         private const int MINIMUM_RESIZE_PIXELS = 4;
 
-        private IWindowImpl? dialog_parent;
+        private Avalonia.Controls.Window? dialog_parent;
         private DialogResult dialog_result = DialogResult.None;
         private TaskCompletionSource<DialogResult>? dialog_task;
         private System.Drawing.Size minimum_size;
@@ -28,54 +27,47 @@ namespace Modern.Forms
         /// <summary>
         /// Initializes a new instance of the Form class.
         /// </summary>
-        public Form () : base (AvaloniaGlobals.GetRequiredService<IWindowingPlatform> ().CreateWindow ())
+        public Form ()
         {
+            var host = new ModernFormsWindowHost (this);
+            InitWindow (host);
+
             TitleBar = Controls.AddImplicitControl (new FormTitleBar ());
 
             Resizeable = true;
-            Window.SetSystemDecorations (SystemDecorations.None);
-            Window.SetExtendClientAreaToDecorationsHint (true);
+            host.SystemDecorations = WindowDecorations.None;
+            host.ExtendClientAreaToDecorationsHint = true;
 
-            Window.Closing = (e) => {
+            host.Closing += (s, e) => {
                 var args = new CancelEventArgs ();
-
                 OnClosing (args);
-
-                return args.Cancel;
+                e.Cancel = args.Cancel;
             };
 
-            // On macOS, defer to the native window chrome (traffic-light buttons on the left,
-            // native drag-to-move, native resize handles) instead of the custom FormTitleBar.
+            // On macOS defer to the native window chrome (traffic-light buttons, native drag/resize).
             if (OperatingSystem.IsMacOS ())
                 UseSystemDecorations = true;
 
-            Window.Resize (new Size (DefaultSize.Width, DefaultSize.Height));
+            host.Width = DefaultSize.Width;
+            host.Height = DefaultSize.Height;
         }
 
-        /// <summary>
-        /// Gets or sets whether the form can be maximized.
-        /// </summary>
+        /// <summary>Gets or sets whether the form can be maximized.</summary>
         public bool AllowMaximize {
             get => TitleBar.AllowMaximize;
             set => TitleBar.AllowMaximize = value;
         }
 
-        /// <summary>
-        /// Gets or sets whether the form can be minimized.
-        /// </summary>
+        /// <summary>Gets or sets whether the form can be minimized.</summary>
         public bool AllowMinimize {
             get => TitleBar.AllowMinimize;
             set => TitleBar.AllowMinimize = value;
         }
 
-        /// <summary>
-        /// Begins dragging the window to move it.
-        /// </summary>
-        public void BeginMoveDrag () => Window.BeginMoveDrag (new PointerPressedEventArgs ());
+        /// <summary>Begins dragging the window to move it.</summary>
+        public void BeginMoveDrag () => AvWindow.StartMoveDrag ();
 
-        /// <summary>
-        /// Gets or sets the bounds of the Window.
-        /// </summary>
+        /// <summary>Gets or sets the bounds of the Window.</summary>
         public new System.Drawing.Rectangle Bounds {
             get => new System.Drawing.Rectangle (Location, Size);
             set {
@@ -93,14 +85,12 @@ namespace Modern.Forms
             if (Application.OpenForms.Contains (this))
                 return;
 
-            // If this was a dialog box we need to reactivate the parent
             if (dialog_parent is not null) {
-                dialog_parent.SetEnabled (true);
+                dialog_parent.IsEnabled = true;
                 dialog_parent.Activate ();
                 dialog_parent = null;
             }
 
-            // If this was a dialog box we need to resume the execution task
             if (dialog_task is not null) {
                 var task = dialog_task;
                 dialog_task = null;
@@ -108,24 +98,16 @@ namespace Modern.Forms
             }
         }
 
-        /// <summary>
-        /// Raised before the form is closed, allowing close to be programatically canceled.
-        /// </summary>
+        /// <summary>Raised before the form is closed, allowing close to be programatically canceled.</summary>
         public event EventHandler<CancelEventArgs>? Closing;
 
-        /// <summary>
-        /// Raised before the form is closed (WinForms compatibility alias for Closing).
-        /// </summary>
+        /// <summary>Raised before the form is closed (WinForms compatibility alias for Closing).</summary>
         public event EventHandler<FormClosingEventArgs>? FormClosing;
 
-        /// <summary>
-        /// Raised after the form is closed.
-        /// </summary>
+        /// <summary>Raised after the form is closed.</summary>
         public event EventHandler<FormClosedEventArgs>? FormClosed;
 
-        /// <summary>
-        /// Raised when the form is first shown (WinForms compatibility alias; raised together with Shown).
-        /// </summary>
+        /// <summary>Raised when the form is first shown (WinForms compatibility alias; raised together with Shown).</summary>
         public event EventHandler? Load;
 
         /// <inheritdoc/>
@@ -138,55 +120,51 @@ namespace Modern.Forms
         /// <inheritdoc/>
         protected override System.Drawing.Size DefaultSize => new System.Drawing.Size (1080, 720);
 
-        /// <summary>
-        /// Gets the default style for all forms.
-        /// </summary>
+        /// <summary>Gets the default style for all forms.</summary>
         public new static readonly ControlStyle DefaultStyle = new ControlStyle (Control.DefaultStyle,
-         (style) => {
-             style.BackgroundColor = Theme.BackgroundColor;
-             style.Border.Color = Theme.AccentColor2;
-             style.Border.Width = 1;
-         });
+            (style) => {
+                style.BackgroundColor = Theme.BackgroundColor;
+                style.Border.Color = Theme.AccentColor2;
+                style.Border.Width = 1;
+            });
 
-        /// <summary>
-        ///  Gets or sets the dialog result for the form.
-        /// </summary>
+        /// <summary>Gets or sets the dialog result for the form.</summary>
         public DialogResult DialogResult {
             get => dialog_result;
             set {
                 dialog_result = value;
 
-                // If we're showing a dialog, setting this closes the dialog
                 if (dialog_result != DialogResult.None && dialog_parent is not null)
                     Close ();
             }
         }
-        /// <summary>
-        /// Gets the next control in tab order.
-        /// </summary>
-        /// <param name="start">The control to start from.</param>
-        /// <param name="forward">True to get the next control, false to get the previous control.</param>
+
+        /// <summary>Gets the next control in tab order.</summary>
         public Control? GetNextControl (Control? start, bool forward = true) => adapter.GetNextControl (start, forward);
 
-        /// <summary>
-        /// Gets or sets the icon for the form.
-        /// </summary>
+        /// <summary>Gets or sets the icon for the form.</summary>
         public SKBitmap? Image {
             get => TitleBar.Image;
             set {
                 TitleBar.Image = value;
-                Window.SetIcon (value);
+
+                if (value is null) {
+                    AvWindow.Icon = null;
+                } else {
+                    using var ms = new System.IO.MemoryStream ();
+                    value.Encode (ms, SKEncodedImageFormat.Png, 100);
+                    ms.Seek (0, System.IO.SeekOrigin.Begin);
+                    AvWindow.Icon = new Avalonia.Controls.WindowIcon (ms);
+                }
             }
         }
 
-        /// <summary>
-        /// Gets or sets the unscaled location of the control.
-        /// </summary>
+        /// <summary>Gets or sets the unscaled location of the control.</summary>
         public new System.Drawing.Point Location {
-            get => window.Position.ToDrawingPoint ();
+            get => new System.Drawing.Point (AvWindow.Position.X, AvWindow.Position.Y);
             set {
-                if (window.Position.ToDrawingPoint () != value)
-                    Window.Move (value.ToPixelPoint ());
+                if (new System.Drawing.Point (AvWindow.Position.X, AvWindow.Position.Y) != value)
+                    AvWindow.Position = new PixelPoint (value.X, value.Y);
             }
         }
 
@@ -213,30 +191,14 @@ namespace Modern.Forms
             var element = GetElementAtLocation (x, y);
 
             switch (element) {
-                case WindowElement.TopBorder:
-                    Window.BeginResizeDrag (WindowEdge.North, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.RightBorder:
-                    Window.BeginResizeDrag (WindowEdge.East, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.BottomBorder:
-                    Window.BeginResizeDrag (WindowEdge.South, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.LeftBorder:
-                    Window.BeginResizeDrag (WindowEdge.West, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.TopLeftCorner:
-                    Window.BeginResizeDrag (WindowEdge.NorthWest, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.TopRightCorner:
-                    Window.BeginResizeDrag (WindowEdge.NorthEast, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.BottomLeftCorner:
-                    Window.BeginResizeDrag (WindowEdge.SouthWest, new PointerPressedEventArgs ());
-                    return true;
-                case WindowElement.BottomRightCorner:
-                    Window.BeginResizeDrag (WindowEdge.SouthEast, new PointerPressedEventArgs ());
-                    return true;
+                case WindowElement.TopBorder:       AvWindow.StartResizeDrag (WindowEdge.North);     return true;
+                case WindowElement.RightBorder:     AvWindow.StartResizeDrag (WindowEdge.East);      return true;
+                case WindowElement.BottomBorder:    AvWindow.StartResizeDrag (WindowEdge.South);     return true;
+                case WindowElement.LeftBorder:      AvWindow.StartResizeDrag (WindowEdge.West);      return true;
+                case WindowElement.TopLeftCorner:   AvWindow.StartResizeDrag (WindowEdge.NorthWest); return true;
+                case WindowElement.TopRightCorner:  AvWindow.StartResizeDrag (WindowEdge.NorthEast); return true;
+                case WindowElement.BottomLeftCorner:  AvWindow.StartResizeDrag (WindowEdge.SouthWest); return true;
+                case WindowElement.BottomRightCorner: AvWindow.StartResizeDrag (WindowEdge.SouthEast); return true;
             }
 
             return false;
@@ -247,51 +209,31 @@ namespace Modern.Forms
             var element = GetElementAtLocation (x, y);
 
             switch (element) {
-                case WindowElement.TopBorder:
-                    window.SetCursor (Cursors.TopSide.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.RightBorder:
-                    window.SetCursor (Cursors.RightSide.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.BottomBorder:
-                    window.SetCursor (Cursors.BottomSide.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.LeftBorder:
-                    window.SetCursor (Cursors.LeftSide.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.TopLeftCorner:
-                    window.SetCursor (Cursors.TopLeftCorner.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.TopRightCorner:
-                    window.SetCursor (Cursors.TopRightCorner.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.BottomLeftCorner:
-                    window.SetCursor (Cursors.BottomLeftCorner.cursor.PlatformCursor);
-                    return true;
-                case WindowElement.BottomRightCorner:
-                    window.SetCursor (Cursors.BottomRightCorner.cursor.PlatformCursor);
-                    return true;
+                case WindowElement.TopBorder:         AvWindow.Cursor = Cursors.TopSide.cursor;         return true;
+                case WindowElement.RightBorder:       AvWindow.Cursor = Cursors.RightSide.cursor;       return true;
+                case WindowElement.BottomBorder:      AvWindow.Cursor = Cursors.BottomSide.cursor;      return true;
+                case WindowElement.LeftBorder:        AvWindow.Cursor = Cursors.LeftSide.cursor;        return true;
+                case WindowElement.TopLeftCorner:     AvWindow.Cursor = Cursors.TopLeftCorner.cursor;   return true;
+                case WindowElement.TopRightCorner:    AvWindow.Cursor = Cursors.TopRightCorner.cursor;  return true;
+                case WindowElement.BottomLeftCorner:  AvWindow.Cursor = Cursors.BottomLeftCorner.cursor; return true;
+                case WindowElement.BottomRightCorner: AvWindow.Cursor = Cursors.BottomRightCorner.cursor; return true;
             }
 
             return base.HandleMouseMove (x, y);
         }
 
-        /// <summary>
-        /// Gets or sets the maximum size of the Window
-        /// </summary>
+        /// <summary>Gets or sets the maximum size of the Window.</summary>
         public System.Drawing.Size MaximumSize {
             get => maximum_size;
             set {
                 if (maximum_size != value) {
                     maximum_size = value;
 
-                    // Don't let MinimumSize be larger than MaximumSize
                     if (!minimum_size.IsEmpty && !maximum_size.IsEmpty)
                         minimum_size = new System.Drawing.Size (Math.Min (minimum_size.Width, maximum_size.Width), Math.Min (minimum_size.Height, maximum_size.Height));
 
-                    Window.SetMinMaxSize (minimum_size.ToAvaloniaSize (), maximum_size.ToAvaloniaSize ());
+                    ApplyMinMaxSize ();
 
-                    // Keep form size within new limits
                     var size = Size;
                     if (!value.IsEmpty && (size.Width > value.Width || size.Height > value.Height))
                         Size = new System.Drawing.Size (Math.Min (size.Width, value.Width), Math.Min (size.Height, value.Height));
@@ -301,22 +243,18 @@ namespace Modern.Forms
             }
         }
 
-        /// <summary>
-        /// Gets or sets the minimum size of the Window
-        /// </summary>
+        /// <summary>Gets or sets the minimum size of the Window.</summary>
         public System.Drawing.Size MinimumSize {
             get => minimum_size;
             set {
                 if (minimum_size != value) {
                     minimum_size = value;
 
-                    // Don't let MaximumSize be smaller than MinimumSize
                     if (!minimum_size.IsEmpty && !maximum_size.IsEmpty)
                         maximum_size = new System.Drawing.Size (Math.Max (minimum_size.Width, maximum_size.Width), Math.Max (minimum_size.Height, maximum_size.Height));
 
-                    Window.SetMinMaxSize (minimum_size.ToAvaloniaSize (), maximum_size.ToAvaloniaSize ());
+                    ApplyMinMaxSize ();
 
-                    // Keep form size within new limits
                     var size = Size;
                     if (size.Width < value.Width || size.Height < value.Height)
                         Size = new System.Drawing.Size (Math.Max (size.Width, value.Width), Math.Max (size.Height, value.Height));
@@ -326,14 +264,18 @@ namespace Modern.Forms
             }
         }
 
-        /// <summary>
-        /// Gets or sets the name of the form.
-        /// </summary>
+        private void ApplyMinMaxSize ()
+        {
+            AvWindow.MinWidth  = minimum_size.IsEmpty ? 0 : minimum_size.Width;
+            AvWindow.MinHeight = minimum_size.IsEmpty ? 0 : minimum_size.Height;
+            AvWindow.MaxWidth  = maximum_size.IsEmpty ? double.PositiveInfinity : maximum_size.Width;
+            AvWindow.MaxHeight = maximum_size.IsEmpty ? double.PositiveInfinity : maximum_size.Height;
+        }
+
+        /// <summary>Gets or sets the name of the form.</summary>
         public string Name { get; set; } = string.Empty;
 
-        /// <summary>
-        /// Raises the Closing event.
-        /// </summary>
+        /// <summary>Raises the Closing event.</summary>
         public virtual void OnClosing (CancelEventArgs e)
         {
             Closing?.Invoke (this, e);
@@ -345,9 +287,7 @@ namespace Modern.Forms
                 e.Cancel = true;
         }
 
-        /// <summary>
-        /// Displays the window modally using the first open form as the parent.
-        /// </summary>
+        /// <summary>Displays the window modally using the first open form as the parent.</summary>
         public DialogResult ShowDialog ()
         {
             var parent = Application.OpenForms.FirstOrDefault (f => f != this);
@@ -362,71 +302,68 @@ namespace Modern.Forms
             return result;
         }
 
-        /// <summary>
-        /// Called when the theme changes.
-        /// </summary>
+        /// <summary>Called when the theme changes.</summary>
         protected internal virtual void OnThemeChanged (EventArgs e)
         {
             foreach (var control in Controls.GetAllControls ())
                 control.OnThemeChanged (e);
         }
 
-        internal override void SetWindowStartupLocation (IWindowBaseImpl? owner = null)
+        internal override void SetWindowStartupLocation (Avalonia.Controls.Window? owner = null)
         {
             var scaling = Scaling;
 
-            // TODO: We really need non-client size here.
             var rect = new PixelRect (
                 PixelPoint.Origin,
-                PixelSize.FromSize (window.ClientSize, scaling));
+                PixelSize.FromSize (AvWindow.ClientSize, scaling));
 
             if (StartPosition == FormStartPosition.CenterScreen) {
-                var screen = Screens.ScreenFromPoint (owner?.Position ?? Location.ToPixelPoint ());
+                var ownerPos = owner is not null ? owner.Position : AvWindow.Position;
+                var screen = Screens.ScreenFromPoint (ownerPos);
 
                 if (screen != null) {
-                    var position = screen.WorkingArea.CenterRect (rect).Position.ToDrawingPoint ();
+                    var wa = screen.WorkingArea;
+                    var position = new System.Drawing.Point (
+                        wa.X + (wa.Width - rect.Width) / 2,
+                        wa.Y + (wa.Height - rect.Height) / 2);
 
                     // Ensure we don't position the titlebar offscreen
-                    position.X = Math.Max (position.X, screen.WorkingArea.X);
-                    position.Y = Math.Max (position.Y, screen.WorkingArea.Y);
+                    position.X = Math.Max (position.X, wa.X);
+                    position.Y = Math.Max (position.Y, wa.Y);
 
                     Location = position;
                 }
             } else if (StartPosition == FormStartPosition.CenterParent) {
                 if (owner != null) {
-                    // TODO: We really need non-client size here.
                     var ownerRect = new PixelRect (
                         owner.Position,
                         PixelSize.FromSize (owner.ClientSize, scaling));
-                    Location = ownerRect.CenterRect (rect).Position.ToDrawingPoint ();
+
+                    var x = ownerRect.X + (ownerRect.Width - rect.Width) / 2;
+                    var y = ownerRect.Y + (ownerRect.Height - rect.Height) / 2;
+                    Location = new System.Drawing.Point (x, y);
                 }
             }
         }
 
-        /// <summary>
-        /// Displays the window to the user modally, preventing interaction with other windows until closed.
-        /// </summary>
+        /// <summary>Displays the window to the user modally, preventing interaction with other windows until closed.</summary>
         public Task<DialogResult> ShowDialog (Form parent)
         {
             dialog_task = new TaskCompletionSource<DialogResult> ();
 
-            // If the DialogResult has already been set we don't show the dialog
             if (dialog_result != DialogResult.None) {
                 dialog_task.SetResult (dialog_result);
                 return dialog_task.Task;
             }
 
-            dialog_parent = parent.Window;
-            Window.SetParent (parent.Window);
+            dialog_parent = parent.AvWindow;
 
-            ShowDialog (parent.Window);
+            ShowDialog (parent.AvWindow);
 
             return dialog_task.Task;
         }
 
-        /// <summary>
-        /// Gets a value indicating a focus rectangle should be drawn on the selected control.
-        /// </summary>
+        /// <summary>Gets a value indicating a focus rectangle should be drawn on the selected control.</summary>
         public bool ShowFocusCues {
             get => show_focus_cues;
             internal set {
@@ -437,68 +374,54 @@ namespace Modern.Forms
             }
         }
 
-        /// <summary>
-        /// Gets or sets the unscaled size of the window.
-        /// </summary>
+        /// <summary>Gets or sets the unscaled size of the window.</summary>
         public new System.Drawing.Size Size {
-            get => new System.Drawing.Size ((int)window.ClientSize.Width, (int)window.ClientSize.Height);
-            set => Window.Resize (new Modern.WindowKit.Size (value.Width, value.Height));
+            get => new System.Drawing.Size ((int)AvWindow.ClientSize.Width, (int)AvWindow.ClientSize.Height);
+            set {
+                AvWindow.Width = value.Width;
+                AvWindow.Height = value.Height;
+            }
         }
 
-        /// <summary>
-        /// Gets the currently active form (the most recently focused open form).
-        /// </summary>
+        /// <summary>Gets the currently active form (the most recently focused open form).</summary>
         public static Form? ActiveForm => Application.OpenForms.LastOrDefault ();
 
-        /// <summary>
-        /// Gets or sets the client area size (equivalent to Size for Modern.Forms).
-        /// </summary>
+        /// <summary>Gets or sets the client area size (equivalent to Size for Modern.Forms).</summary>
         public System.Drawing.Size ClientSize {
             get => Size;
             set => Size = value;
         }
 
-        /// <summary>
-        /// Gets or sets the automatic scaling mode. No-op in Modern.Forms.
-        /// </summary>
+        /// <summary>Gets or sets the automatic scaling mode. No-op in Modern.Forms.</summary>
         public AutoScaleMode AutoScaleMode { get; set; } = AutoScaleMode.Font;
 
-        /// <summary>
-        /// Gets or sets the auto-scale dimensions. No-op in Modern.Forms.
-        /// </summary>
+        /// <summary>Gets or sets the auto-scale dimensions. No-op in Modern.Forms.</summary>
         public System.Drawing.SizeF AutoScaleDimensions { get; set; }
 
-        /// <summary>
-        /// Gets or sets the binding context. No-op in Modern.Forms.
-        /// </summary>
+        /// <summary>Gets or sets the binding context. No-op in Modern.Forms.</summary>
         public object? BindingContext { get; set; }
 
         /// <inheritdoc/>
         public override ControlStyle Style { get; } = new ControlStyle (DefaultStyle);
 
-        /// <summary>
-        /// Gets or sets the text for the form title bar.
-        /// </summary>
+        /// <summary>Gets or sets the text for the form title bar.</summary>
         public string Text {
             get => text;
             set {
                 if (text != value) {
                     text = value;
-                    Window.SetTitle (text);
+                    AvWindow.Title = text;
                     TitleBar.Text = text;
                 }
             }
         }
 
-        /// <summary>
-        /// Gets the title bar for the form.
-        /// </summary>
+        /// <summary>Gets the title bar for the form.</summary>
         public FormTitleBar TitleBar { get; }
 
         /// <summary>
-        /// Gets or sets whether the form should use the operating system's title bar and decorations,
-        /// or use managed decorations.  The default is false.  This must be changed before the form
-        /// is shown for the first time.
+        /// Gets or sets whether the form should use the operating system's title bar and decorations.
+        /// Must be changed before the form is shown for the first time.
         /// </summary>
         public bool UseSystemDecorations {
             get => use_system_decorations;
@@ -510,21 +433,17 @@ namespace Modern.Forms
                     use_system_decorations = value;
                     TitleBar.Visible = !use_system_decorations;
                     Style.Border.Width = use_system_decorations ? 0 : 1;
-                    Window.SetSystemDecorations (value ? SystemDecorations.Full : SystemDecorations.None);
-                    Window.SetExtendClientAreaToDecorationsHint (!value);
+                    AvWindow.SystemDecorations = value ? WindowDecorations.Full : WindowDecorations.None;
+                    AvWindow.ExtendClientAreaToDecorationsHint = !value;
                 }
             }
         }
 
-        /// <summary>
-        /// Gets or sets the state of the form (normal/minimized/maximized).
-        /// </summary>
+        /// <summary>Gets or sets the state of the form (normal/minimized/maximized).</summary>
         public FormWindowState WindowState {
-            get => (FormWindowState)Window.WindowState;
-            set => Window.WindowState = (WindowState)value;
+            get => (FormWindowState)(int)AvWindow.WindowState;
+            set => AvWindow.WindowState = (Avalonia.Controls.WindowState)(int)value;
         }
-
-        private IWindowImpl Window => (IWindowImpl)window;
 
         private enum WindowElement
         {

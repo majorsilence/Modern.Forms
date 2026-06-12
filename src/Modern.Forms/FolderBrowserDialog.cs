@@ -1,4 +1,4 @@
-﻿using Modern.WindowKit.Platform.Storage;
+using Avalonia.Platform.Storage;
 
 namespace Modern.Forms
 {
@@ -15,26 +15,28 @@ namespace Modern.Forms
         /// <summary>
         /// Shows the dialog to the user.
         /// </summary>
-        /// <param name="owner">The window that owns this dialog.</param>
         public async Task<DialogResult> ShowDialog (Form owner)
         {
-            if (owner.window.TryGetFeature (typeof (IStorageProvider)) is IStorageProvider parent) {
-                var options = new FolderPickerOpenOptions {
-                    AllowMultiple = false,
-                    SuggestedStartLocation = GetInitialDirectory (),
-                    Title = Title
-                };
+            var parent = owner.AvWindow.StorageProvider;
 
-                var result = await parent.OpenFolderPickerAsync (options);
+            IStorageFolder? startLocation = null;
+            var initPath = GetInitialDirectory ();
+            if (initPath is not null)
+                startLocation = await parent.TryGetFolderFromPathAsync (new Uri (initPath));
 
-                var paths = result.Select (f => f.GetFullPath ()).WhereNotNull ();
+            var options = new FolderPickerOpenOptions {
+                AllowMultiple = false,
+                SuggestedStartLocation = startLocation,
+                Title = Title
+            };
 
-                SelectedPath = paths?.FirstOrDefault ();
+            var result = await parent.OpenFolderPickerAsync (options);
 
-                return SelectedPath is null ? DialogResult.Cancel : DialogResult.OK;
-            }
+            var paths = result.Select (f => f.GetFullPath ()).WhereNotNull ();
 
-            throw new ArgumentException ("Owner does not support system dialogs.");
+            SelectedPath = paths?.FirstOrDefault ();
+
+            return SelectedPath is null ? DialogResult.Cancel : DialogResult.OK;
         }
     }
 }

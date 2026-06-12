@@ -1,4 +1,4 @@
-﻿using Modern.WindowKit.Input;
+using Avalonia.Input;
 
 namespace Modern.Forms
 {
@@ -7,11 +7,11 @@ namespace Modern.Forms
     /// </summary>
     public class Cursor
     {
-        internal Modern.WindowKit.Input.Cursor cursor;
+        internal Avalonia.Input.Cursor cursor;
 
         internal Cursor (StandardCursorType type)
         {
-            cursor = new Modern.WindowKit.Input.Cursor (type);
+            cursor = new Avalonia.Input.Cursor (type);
         }
 
         /// <summary>

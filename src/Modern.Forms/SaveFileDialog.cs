@@ -1,4 +1,4 @@
-﻿using Modern.WindowKit.Platform.Storage;
+using Avalonia.Platform.Storage;
 
 namespace Modern.Forms
 {
@@ -15,31 +15,33 @@ namespace Modern.Forms
         /// <summary>
         /// Shows the dialog to the user.
         /// </summary>
-        /// <param name="owner">The window that owns this dialog.</param>
         public async Task<DialogResult> ShowDialog (Form owner)
         {
-            if (owner.window.TryGetFeature (typeof (IStorageProvider)) is IStorageProvider parent) {
-                var options = new FilePickerSaveOptions {
-                    DefaultExtension = DefaultExtension,
-                    SuggestedStartLocation = GetInitialDirectory (),
-                    SuggestedFileName = FileName,
-                    Title = Title,
-                    FileTypeChoices = filters
-                };
+            var parent = owner.AvWindow.StorageProvider;
 
-                var result = await parent.SaveFilePickerAsync (options);
+            IStorageFolder? startLocation = null;
+            var initPath = GetInitialDirectory ();
+            if (initPath is not null)
+                startLocation = await parent.TryGetFolderFromPathAsync (new Uri (initPath));
 
-                FileNames.Clear ();
+            var options = new FilePickerSaveOptions {
+                DefaultExtension = DefaultExtension,
+                SuggestedStartLocation = startLocation,
+                SuggestedFileName = FileName,
+                Title = Title,
+                FileTypeChoices = filters
+            };
 
-                var file = result?.GetFullPath ();
+            var result = await parent.SaveFilePickerAsync (options);
 
-                if (file is not null)
-                    FileNames.Add (file);
+            FileNames.Clear ();
 
-                return FileNames.Count > 0 ? DialogResult.OK : DialogResult.Cancel;
-            }
+            var file = result?.GetFullPath ();
 
-            throw new ArgumentException ("Owner does not support system dialogs.");
+            if (file is not null)
+                FileNames.Add (file);
+
+            return FileNames.Count > 0 ? DialogResult.OK : DialogResult.Cancel;
         }
     }
 }

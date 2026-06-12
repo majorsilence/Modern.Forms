@@ -1,12 +1,11 @@
 using System;
 using System.Drawing;
-using Modern.WindowKit.Threading;
+using Avalonia.Threading;
 using SkiaSharp;
 
 namespace Modern.Forms
 {
     // WinForms-compatibility surface for Control: BackgroundImage, Invoke/BeginInvoke.
-    // (BackColor / ForeColor live in Control.cs alongside the other style wrappers.)
     public partial class Control
     {
         private SKBitmap? background_image;
@@ -22,8 +21,7 @@ namespace Modern.Forms
 
         /// <summary>
         /// Gets or sets a value indicating the control is double-buffered. Modern.Forms always renders
-        /// each control into its own off-screen surface, so this is effectively always true; the setter
-        /// is accepted for WinForms source compatibility.
+        /// each control into its own off-screen surface, so this is effectively always true.
         /// </summary>
         public bool DoubleBuffered { get; set; } = true;
 
@@ -51,8 +49,7 @@ namespace Modern.Forms
         }
 
         /// <summary>
-        /// Sets the specified <see cref="ControlStyles"/> flag. Provided for WinForms source
-        /// compatibility; the flags are stored but rendering remains Skia-based double-buffered.
+        /// Sets the specified <see cref="ControlStyles"/> flag.
         /// </summary>
         public void SetStyle (ControlStyles flag, bool value)
         {
@@ -93,7 +90,6 @@ namespace Modern.Forms
             }
         }
 
-        // Draws the background image honoring BackgroundImageLayout. Called from OnPaintBackground.
         private void PaintBackgroundImage (PaintEventArgs e)
         {
             var image = background_image;
@@ -101,8 +97,6 @@ namespace Modern.Forms
             if (image is null)
                 return;
 
-            // The control paints into its own buffer in control-local coordinates (origin 0,0),
-            // so positioning is relative to (0,0) with the scaled width/height.
             var width = ScaledBounds.Width;
             var height = ScaledBounds.Height;
 

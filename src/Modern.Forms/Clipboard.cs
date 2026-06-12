@@ -1,5 +1,5 @@
-﻿using Modern.WindowKit;
-using Modern.WindowKit.Input.Platform;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
 
 namespace Modern.Forms
 {
@@ -8,22 +8,30 @@ namespace Modern.Forms
     /// </summary>
     public static class Clipboard
     {
-        /// <summary>
-        /// Gets the contents of the clipboard as text.
-        /// </summary>
+        private static IClipboard? GetClipboard ()
+            => Application.OpenForms.FirstOrDefault ()?.AvWindow?.Clipboard;
+
+        /// <summary>Gets the contents of the clipboard as text.</summary>
         public static async Task<string?> GetTextAsync ()
-            => await AvaloniaGlobals.GetRequiredService<IClipboard> ().GetTextAsync ().ConfigureAwait (false);
+        {
+            var cb = GetClipboard ();
+            return cb is not null ? await cb.TryGetTextAsync ().ConfigureAwait (false) : null;
+        }
 
-        /// <summary>
-        /// Sets the text contents of the clipboard.
-        /// </summary>
+        /// <summary>Sets the text contents of the clipboard.</summary>
         public static async Task SetTextAsync (string text)
-            => await AvaloniaGlobals.GetRequiredService<IClipboard> ().SetTextAsync (text).ConfigureAwait (false);
+        {
+            var cb = GetClipboard ();
+            if (cb is not null)
+                await cb.SetValueAsync (DataFormat.Text, text).ConfigureAwait (false);
+        }
 
-        /// <summary>
-        /// Clears the contents of the clipboard.
-        /// </summary>
+        /// <summary>Clears the contents of the clipboard.</summary>
         public static async Task ClearAsync ()
-            => await AvaloniaGlobals.GetRequiredService<IClipboard> ().ClearAsync ().ConfigureAwait (false);
+        {
+            var cb = GetClipboard ();
+            if (cb is not null)
+                await cb.ClearAsync ().ConfigureAwait (false);
+        }
     }
 }
