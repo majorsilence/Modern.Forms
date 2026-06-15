@@ -615,6 +615,9 @@ namespace Modern.Forms
         /// <summary>Gets or sets whether the ListBox displays items in multiple columns. Stub in Modern.Forms.</summary>
         public bool MultiColumn { get; set; }
 
+        /// <summary>Gets or sets whether formatting is applied to the DisplayMember. Stub in Modern.Forms.</summary>
+        public bool FormattingEnabled { get; set; }
+
         /// <summary>Gets or sets the width of each column in a multi-column ListBox. Stub in Modern.Forms.</summary>
         public int ColumnWidth { get; set; }
 

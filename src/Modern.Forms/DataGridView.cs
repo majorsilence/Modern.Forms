@@ -359,10 +359,18 @@ namespace Modern.Forms
         /// Setting this property auto-generates columns from the item type's public properties
         /// and populates the rows from the collection.
         /// </summary>
-        public IList? DataSource {
+        public object? DataSource {
             get => data_source;
             set {
-                data_source = value;
+                // WinForms accepts any list-like source. Resolve the common ADO.NET cases:
+                // a DataTable binds via its DefaultView; an IListSource (e.g. DataSet) via GetList ().
+                data_source = value switch {
+                    null => null,
+                    IList list => list,
+                    System.Data.DataTable table => table.DefaultView,
+                    System.ComponentModel.IListSource source => source.GetList (),
+                    _ => data_source
+                };
                 OnDataSourceChanged ();
             }
         }

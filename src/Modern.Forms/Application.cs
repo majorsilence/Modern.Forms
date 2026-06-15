@@ -78,6 +78,16 @@ namespace Modern.Forms
         }
 
         /// <summary>
+        /// Exits the message loop on the current thread. In Modern.Forms this is equivalent to <see cref="Exit"/>.
+        /// </summary>
+        public static void ExitThread () => Exit ();
+
+        /// <summary>
+        /// Sets the application-wide color mode (light/dark/system). Stub in Modern.Forms.
+        /// </summary>
+        public static void SetColorMode (SystemColorMode colorMode) { }
+
+        /// <summary>
         /// Raised when the application is exiting.
         /// </summary>
         public static event EventHandler? OnExit;
@@ -291,5 +301,16 @@ namespace Modern.Forms
         CatchException,
         /// <summary>Automatically choose based on whether a handler is attached.</summary>
         Automatic
+    }
+
+    /// <summary>Specifies the application-wide color mode. WinForms compatibility.</summary>
+    public enum SystemColorMode
+    {
+        /// <summary>Follow the operating system setting.</summary>
+        System = 0,
+        /// <summary>Use the classic (light) color set.</summary>
+        Classic = 1,
+        /// <summary>Use the dark color set.</summary>
+        Dark = 2
     }
 }

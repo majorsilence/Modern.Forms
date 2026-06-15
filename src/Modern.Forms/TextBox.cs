@@ -174,6 +174,15 @@ namespace Modern.Forms
             }
         }
 
+        /// <summary>
+        /// Gets or sets a value indicating if the TextBox supports multiple lines of text.
+        /// WinForms-compatible spelling alias for <see cref="MultiLine"/>.
+        /// </summary>
+        public bool Multiline {
+            get => MultiLine;
+            set => MultiLine = value;
+        }
+
         /// <inheritdoc/>
         protected override void OnDeselected (EventArgs e)
         {

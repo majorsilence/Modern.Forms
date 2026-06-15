@@ -77,19 +77,7 @@ namespace Modern.Forms
             _surface.SizeChanged += OnSurfaceSizeChanged;
 
             Opened += (_, _) => {
-                // Ensure framebuffer exists before the first timer tick fires.
-                // OnSurfaceSizeChanged may not have run yet if layout hasn't completed.
-                if (_framebuffer is null) {
-                    var scaling = _owner.Scaling;
-                    var w = Math.Max (1, (int)(ClientSize.Width  * scaling));
-                    var h = Math.Max (1, (int)(ClientSize.Height * scaling));
-                    _framebuffer = new WriteableBitmap (
-                        new PixelSize (w, h),
-                        new Vector (96 * scaling, 96 * scaling),
-                        PixelFormat.Bgra8888, AlphaFormat.Premul);
-                    _surface.Source = _framebuffer;
-                }
-
+                EnsureFramebuffer ();
                 StartRenderTimer ();
             };
             Closed += (_, _) => StopRenderTimer ();
@@ -97,27 +85,39 @@ namespace Modern.Forms
 
         private void OnWindowClosing (object? sender, WindowClosingEventArgs e) { }
 
-        private void OnSurfaceSizeChanged (object? sender, SizeChangedEventArgs e)
+        private void OnSurfaceSizeChanged (object? sender, SizeChangedEventArgs e) => EnsureFramebuffer ();
+
+        // Creates or resizes the framebuffer so its PHYSICAL pixel size always matches the surface's
+        // current logical size × the current render scaling. Called both on layout/size changes and
+        // every frame, so it self-corrects when the render scaling changes after the window opens
+        // (e.g. a popup shown before its DPI has settled, or a window dragged between displays of
+        // different scale). Returns true if a usable framebuffer exists.
+        private bool EnsureFramebuffer ()
         {
             var scaling = _owner.Scaling;
-            var dpi = 96 * scaling;
+            if (scaling <= 0)
+                scaling = 1;
 
-            // Create at physical pixel size so our Scaled* drawing pipeline maps 1:1.
-            // Setting the DPI to match tells Avalonia the bitmap represents the full
-            // logical area (so it displays at the right logical size).
-            var physW = Math.Max (1, (int)Math.Round (e.NewSize.Width * scaling));
-            var physH = Math.Max (1, (int)Math.Round (e.NewSize.Height * scaling));
+            // Prefer the image's laid-out logical size; fall back to the window client size
+            // before the first layout pass has run.
+            var logicalW = _surface.Bounds.Width  > 0 ? _surface.Bounds.Width  : ClientSize.Width;
+            var logicalH = _surface.Bounds.Height > 0 ? _surface.Bounds.Height : ClientSize.Height;
+
+            var physW = Math.Max (1, (int)Math.Round (logicalW * scaling));
+            var physH = Math.Max (1, (int)Math.Round (logicalH * scaling));
 
             if (_framebuffer is null || _framebuffer.PixelSize.Width != physW || _framebuffer.PixelSize.Height != physH) {
                 _framebuffer?.Dispose ();
                 _framebuffer = new WriteableBitmap (
                     new PixelSize (physW, physH),
-                    new Vector (dpi, dpi),
+                    new Vector (96 * scaling, 96 * scaling),
                     PixelFormat.Bgra8888,
                     AlphaFormat.Premul);
                 _surface.Source = _framebuffer;
                 IsDirty = true;
             }
+
+            return _framebuffer is not null;
         }
 
         private void StartRenderTimer ()
@@ -139,7 +139,10 @@ namespace Modern.Forms
 
         private void PaintFrame ()
         {
-            if (_framebuffer is null)
+            // Self-correcting: recreates the framebuffer if the surface size or render scaling
+            // changed since the last frame (fixes blurry/half-resolution popups on HiDPI displays
+            // where the scaling settles after the window has already opened).
+            if (!EnsureFramebuffer () || _framebuffer is null)
                 return;
 
             // Skip if nothing needs painting.
@@ -284,6 +287,16 @@ namespace Modern.Forms
         internal ModernFormsPopupWindowHost (WindowBase owner) : base (owner)
         {
             Topmost = true;
+
+            // On macOS, a borderless window with ExtendClientAreaToDecorationsHint = true (inherited
+            // from the base host) is rendered with a translucent "vibrancy" backdrop. For a menu or
+            // combo-box popup that shows up as a grey, blurry square instead of the menu. The main
+            // Form avoids this by switching to native decorations on macOS; a popup has no chrome,
+            // so we just make it a plain opaque borderless window.
+            if (OperatingSystem.IsMacOS ()) {
+                ExtendClientAreaToDecorationsHint = false;
+                TransparencyLevelHint = new[] { WindowTransparencyLevel.None };
+            }
         }
     }
 }

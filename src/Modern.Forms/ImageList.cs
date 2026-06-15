@@ -43,6 +43,16 @@ public class ImageList : Component
     /// <summary>Gets or sets the color depth used by the image list. Stored but not enforced in Modern.Forms.</summary>
     public ColorDepth ColorDepth { get; set; } = ColorDepth.Depth32Bit;
 
+    /// <summary>Gets or sets the color to treat as transparent. Stub in Modern.Forms (images keep their own alpha).</summary>
+    public System.Drawing.Color TransparentColor { get; set; } = System.Drawing.Color.Transparent;
+
+    /// <summary>
+    /// Gets or sets the image stream used to (de)serialize the image list (e.g. from a .resx resource).
+    /// Stub in Modern.Forms — accepting a deserialized <see cref="ImageListStreamer"/> is supported for
+    /// source compatibility, but the resx image stream is not unpacked.
+    /// </summary>
+    public ImageListStreamer? ImageStream { get; set; }
+
     /// <summary>Draws the image at the specified index at the given point.</summary>
     public void Draw (Graphics g, System.Drawing.Point pt, int index) => Draw (g, pt.X, pt.Y, index);
 
@@ -68,4 +78,15 @@ public class ImageList : Component
 
         base.Dispose (disposing);
     }
+}
+
+/// <summary>
+/// WinForms compatibility: represents the serialized image-stream of an <see cref="ImageList"/>,
+/// as produced by designer-generated <c>resources.GetObject("imageList.ImageStream")</c> calls.
+/// Stub in Modern.Forms — accepted for source compatibility but not unpacked.
+/// </summary>
+public sealed class ImageListStreamer
+{
+    /// <summary>Initializes a new, empty instance of the ImageListStreamer class.</summary>
+    public ImageListStreamer () { }
 }

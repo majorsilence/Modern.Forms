@@ -50,6 +50,9 @@ namespace ControlGallery
             tree.Items.Add ("StatusBar", ImageLoader.Get ("button.png"));
             tree.Items.Add ("StatusStrip", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TabControl", ImageLoader.Get ("button.png"));
+            tree.Items.Add ("Telerik: Controls", ImageLoader.Get ("button.png"));
+            tree.Items.Add ("Telerik: GridView", ImageLoader.Get ("button.png"));
+            tree.Items.Add ("Telerik: PageView", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TableLayoutPanel", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TabStrip", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TextBox", ImageLoader.Get ("button.png"));
@@ -150,6 +153,12 @@ namespace ControlGallery
                     return new StatusStripPanel ();
                 case "TabControl":
                     return new TabControlPanel ();
+                case "Telerik: Controls":
+                    return new TelerikControlsPanel ();
+                case "Telerik: GridView":
+                    return new TelerikGridViewPanel ();
+                case "Telerik: PageView":
+                    return new TelerikPageViewPanel ();
                 case "TableLayoutPanel":
                     return new TableLayoutPanelPanel ();
                 case "TabStrip":
