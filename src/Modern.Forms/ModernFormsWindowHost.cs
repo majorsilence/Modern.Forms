@@ -31,7 +31,7 @@ namespace Modern.Forms
     /// native-framebuffer approach and is reliable across all Avalonia 12 platforms.
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage ("Design", "CA1001", Justification = "_framebuffer is disposed in OnClosed; Window lifecycle manages the call.")]
-    internal class ModernFormsWindowHost : Window
+    internal class ModernFormsWindowHost : Window, Modern.Forms.Backends.IWindowBackend
     {
         private readonly WindowBase _owner;
 
@@ -163,10 +163,6 @@ namespace Modern.Forms
                 var physW = fb.Size.Width;
                 var physH = fb.Size.Height;
 
-                // Adapter and border widths are in LOGICAL pixels.
-                var logicalW = (int)Math.Round (physW / scaling);
-                var logicalH = (int)Math.Round (physH / scaling);
-
                 var skInfo = new SKImageInfo (physW, physH, SKColorType.Bgra8888, SKAlphaType.Premul);
 
                 using var surface = SKSurface.Create (skInfo, fb.Address, fb.RowBytes);
@@ -174,38 +170,8 @@ namespace Modern.Forms
                 if (surface is null)
                     return;
 
-                var canvas = surface.Canvas;
-
-                // Border widths in logical pixels → physical for canvas draw calls.
-                var border = _owner.CurrentStyle.Border;
-                var borderLeft = border.Left.GetWidth ();
-                var borderTop = border.Top.GetWidth ();
-                var physBorderLeft = (int)(borderLeft * scaling);
-                var physBorderTop  = (int)(borderTop  * scaling);
-                var physBorderRight  = (int)(border.Right.GetWidth ()  * scaling);
-                var physBorderBottom = (int)(border.Bottom.GetWidth () * scaling);
-
-                if (adapter.Left != borderLeft || adapter.Top != borderTop ||
-                    adapter.Width != logicalW || adapter.Height != logicalH) {
-                    adapter.SetBounds (borderLeft, borderTop, logicalW, logicalH);
-                    adapter.PerformLayout ();
-                }
-
-                var e = new PaintEventArgs (skInfo, canvas, scaling);
-
-                _owner.OnPaintBackground (e);
-                canvas.DrawBorder (new Rectangle (0, 0, physW, physH), _owner.CurrentStyle);
-                _owner.OnPaint (e);
-
-                // Clip canvas to the inner client area (excludes borders).
-                canvas.ClipRect (new SKRect (
-                    physBorderLeft, physBorderTop,
-                    physW - physBorderRight + 1, physH - physBorderBottom + 1));
-
-                adapter.RaisePaintBackground (e);
-                adapter.RaisePaint (e);
-
-                canvas.Flush ();
+                // The Modern.Forms paint pipeline is backend-neutral (SkiaSharp); it lives on WindowBase.
+                _owner.RenderFrame (surface.Canvas, physW, physH, scaling);
             } catch (Exception ex) {
                 Console.Error.WriteLine ($"[MF] PaintFrame error: {ex.Message}");
             }
@@ -215,52 +181,85 @@ namespace Modern.Forms
 
         // ── Input forwarding ──────────────────────────────────────────────────
 
+        // These overrides own the Avalonia → Modern.Forms input translation (positions scaled to
+        // physical pixels, buttons/keys mapped), then hand neutral values to the owner. No Avalonia
+        // input types cross into WindowBase.
+
         protected override void OnPointerPressed (AvPointerPressedEventArgs e)
         {
             LastPointerPressed = e;
-            _owner.OnAvaloniaPointerPressed (e);
+            var pos = e.GetPosition (this);
+            var props = e.GetCurrentPoint (this).Properties;
+            _owner.HandlePointerPressed (
+                AvaloniaKeyInterop.PressedButton (props.PointerUpdateKind),
+                (int)(pos.X * RenderScaling), (int)(pos.Y * RenderScaling),
+                AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers));
             base.OnPointerPressed (e);
         }
 
         protected override void OnPointerReleased (AvPointerReleasedEventArgs e)
         {
-            _owner.OnAvaloniaPointerReleased (e);
+            var pos = e.GetPosition (this);
+            var props = e.GetCurrentPoint (this).Properties;
+            _owner.HandlePointerReleased (
+                AvaloniaKeyInterop.ReleasedButton (props.PointerUpdateKind),
+                (int)(pos.X * RenderScaling), (int)(pos.Y * RenderScaling),
+                AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers));
             base.OnPointerReleased (e);
         }
 
         protected override void OnPointerMoved (AvPointerEventArgs e)
         {
-            _owner.OnAvaloniaPointerMoved (e);
+            var pos = e.GetPosition (this);
+            var props = e.GetCurrentPoint (this).Properties;
+            _owner.HandlePointerMoved (
+                AvaloniaKeyInterop.ToMouseButtons (props),
+                (int)(pos.X * RenderScaling), (int)(pos.Y * RenderScaling),
+                AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers));
             base.OnPointerMoved (e);
         }
 
         protected override void OnPointerWheelChanged (AvPointerWheelChangedEventArgs e)
         {
-            _owner.OnAvaloniaPointerWheel (e);
+            var pos = e.GetPosition (this);
+            var props = e.GetCurrentPoint (this).Properties;
+            _owner.HandlePointerWheel (
+                AvaloniaKeyInterop.ToMouseButtons (props),
+                (int)(pos.X * RenderScaling), (int)(pos.Y * RenderScaling),
+                new System.Drawing.Point ((int)e.Delta.X, (int)e.Delta.Y),
+                AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers));
             base.OnPointerWheelChanged (e);
         }
 
         protected override void OnPointerExited (AvPointerEventArgs e)
         {
-            _owner.OnAvaloniaPointerExited (e);
+            var pos = e.GetPosition (this);
+            var props = e.GetCurrentPoint (this).Properties;
+            _owner.HandlePointerExited (
+                AvaloniaKeyInterop.ToMouseButtons (props),
+                (int)(pos.X * RenderScaling), (int)(pos.Y * RenderScaling),
+                AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers));
             base.OnPointerExited (e);
         }
 
         protected override void OnKeyDown (AvKeyEventArgs e)
         {
-            _owner.OnAvaloniaKeyDown (e);
+            if (_owner.HandleKeyDown (AvaloniaKeyInterop.AddModifiers (AvaloniaKeyInterop.ToFormsKey (e.Key), e.KeyModifiers)))
+                e.Handled = true;
             base.OnKeyDown (e);
         }
 
         protected override void OnKeyUp (AvKeyEventArgs e)
         {
-            _owner.OnAvaloniaKeyUp (e);
+            if (_owner.HandleKeyUp (AvaloniaKeyInterop.AddModifiers (AvaloniaKeyInterop.ToFormsKey (e.Key), e.KeyModifiers)))
+                e.Handled = true;
             base.OnKeyUp (e);
         }
 
         protected override void OnTextInput (AvTextInputEventArgs e)
         {
-            _owner.OnAvaloniaTextInput (e);
+            if (_owner.HandleTextInput (e.Text ?? string.Empty))
+                e.Handled = true;
             base.OnTextInput (e);
         }
 
@@ -277,6 +276,81 @@ namespace Modern.Forms
             if (LastPointerPressed is not null)
                 BeginResizeDrag (edge, LastPointerPressed);
         }
+
+        // ── IWindowBackend (explicit: avoids name collisions with the Avalonia Window base) ──────────
+
+        System.Drawing.Point Backends.IWindowBackend.Location {
+            get => new System.Drawing.Point (Position.X, Position.Y);
+            set => Position = new PixelPoint (value.X, value.Y);
+        }
+
+        System.Drawing.Size Backends.IWindowBackend.Size {
+            get => new System.Drawing.Size ((int)Width, (int)Height);
+            set { Width = value.Width; Height = value.Height; }
+        }
+
+        System.Drawing.Size Backends.IWindowBackend.ClientSize
+            => new System.Drawing.Size ((int)ClientSize.Width, (int)ClientSize.Height);
+
+        double Backends.IWindowBackend.Scaling => RenderScaling;
+
+        void Backends.IWindowBackend.Show () => Show ();
+
+        void Backends.IWindowBackend.ShowDialog (Backends.IWindowBackend? owner)
+        {
+            if (owner is ModernFormsWindowHost ownerHost)
+                _ = ShowDialog (ownerHost);
+            else
+                Show ();
+        }
+
+        void Backends.IWindowBackend.Hide () => Hide ();
+
+        void Backends.IWindowBackend.Close () => Close ();
+
+        void Backends.IWindowBackend.Activate () => Activate ();
+
+        string Backends.IWindowBackend.Title { set => Title = value; }
+
+        bool Backends.IWindowBackend.Topmost {
+            get => Topmost;
+            set => Topmost = value;
+        }
+
+        void Backends.IWindowBackend.SetSystemDecorations (bool useSystemDecorations)
+        {
+            WindowDecorations = useSystemDecorations ? WindowDecorations.Full : WindowDecorations.None;
+            ExtendClientAreaToDecorationsHint = !useSystemDecorations;
+        }
+
+        void Backends.IWindowBackend.SetCursor (object? cursor) => Cursor = cursor as Avalonia.Input.Cursor;
+
+        System.Drawing.Point Backends.IWindowBackend.PointToClient (System.Drawing.Point screen)
+        {
+            var p = this.PointToClient (new PixelPoint (screen.X, screen.Y));
+            return new System.Drawing.Point ((int)p.X, (int)p.Y);
+        }
+
+        System.Drawing.Point Backends.IWindowBackend.PointToScreen (System.Drawing.Point client)
+        {
+            var p = this.PointToScreen (new Avalonia.Point (client.X, client.Y));
+            return new System.Drawing.Point (p.X, p.Y);
+        }
+
+        void Backends.IWindowBackend.BeginMoveDrag () => StartMoveDrag ();
+
+        void Backends.IWindowBackend.BeginResizeDrag (Backends.WindowEdge edge) => StartResizeDrag (edge switch {
+            Backends.WindowEdge.North => WindowEdge.North,
+            Backends.WindowEdge.NorthEast => WindowEdge.NorthEast,
+            Backends.WindowEdge.East => WindowEdge.East,
+            Backends.WindowEdge.SouthEast => WindowEdge.SouthEast,
+            Backends.WindowEdge.South => WindowEdge.South,
+            Backends.WindowEdge.SouthWest => WindowEdge.SouthWest,
+            Backends.WindowEdge.West => WindowEdge.West,
+            _ => WindowEdge.NorthWest
+        });
+
+        void Backends.IWindowBackend.Invalidate () => IsDirty = true;
     }
 
     /// <summary>

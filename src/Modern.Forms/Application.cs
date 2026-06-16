@@ -1,6 +1,7 @@
 using System.Reflection;
 using Avalonia.Input;
 using Avalonia.Threading;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -106,8 +107,7 @@ namespace Modern.Forms
         /// <param name="mainForm">A Form that represents the form to make visible.</param>
         public static void Run (Form mainForm)
         {
-            AvaloniaBootstrap.EnsureInitialized ();
-            AvaloniaSynchronizationContext.InstallIfNeeded ();
+            Platform.Backend.Initialize ();
 
             mainForm.Show ();
             Run ((ICloseable)mainForm);
@@ -131,13 +131,12 @@ namespace Modern.Forms
             if (_mainLoopCancellationTokenSource != null)
                 throw new InvalidOperationException ("Run should only be called once");
 
-            AvaloniaBootstrap.EnsureInitialized ();
-            AvaloniaSynchronizationContext.InstallIfNeeded ();
+            Platform.Backend.Initialize ();
             closable.Closed += (s, e) => Exit ();
 
             _mainLoopCancellationTokenSource = new CancellationTokenSource ();
 
-            Dispatcher.UIThread.MainLoop (_mainLoopCancellationTokenSource.Token);
+            Platform.Backend.RunMainLoop (_mainLoopCancellationTokenSource.Token);
 
             // Make sure we call OnExit in case an error happened and Exit() wasn't called explicitly
             if (!is_exiting)
@@ -150,7 +149,7 @@ namespace Modern.Forms
         /// <param name="action">The action to perform on the UI thread.</param>
         public static void RunOnUIThread (Action action)
         {
-            Dispatcher.UIThread.Post (action);
+            Platform.Backend.Post (action);
         }
 
         /// <summary>
@@ -214,7 +213,7 @@ namespace Modern.Forms
                 ProductName ?? string.Empty);
 
         /// <summary>Processes all messages currently in the message queue.</summary>
-        public static void DoEvents () => Avalonia.Threading.Dispatcher.UIThread.RunJobs ();
+        public static void DoEvents () => Platform.Backend.DoEvents ();
 
         /// <summary>Restarts the application. No-op in Modern.Forms — call Environment.Exit(0) and relaunch if needed.</summary>
         public static void Restart () => Environment.Exit (0);

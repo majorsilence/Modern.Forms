@@ -17,6 +17,10 @@ namespace Modern.Forms
         internal ModernFormsWindowHost AvWindow = null!;
         internal ControlAdapter adapter = null!;
 
+        // The window's platform backend (the host implements IWindowBackend). WindowBase performs its
+        // window operations through this seam so it stays backend-neutral.
+        internal Modern.Forms.Backends.IWindowBackend Backend => AvWindow;
+
         private DateTime last_click_time;
         private System.Drawing.Point last_click_point;
         private Cursor? current_cursor;
@@ -28,7 +32,7 @@ namespace Modern.Forms
         /// </summary>
         protected WindowBase ()
         {
-            AvaloniaBootstrap.EnsureInitialized ();
+            Modern.Forms.Backends.Platform.Backend.Initialize ();
         }
 
         /// <summary>
@@ -92,6 +96,51 @@ namespace Modern.Forms
         /// <summary>Gets the current style of this window instance.</summary>
         public virtual ControlStyle CurrentStyle => Style;
 
+        /// <summary>
+        /// Renders one frame of the Modern.Forms scene into the supplied SkiaSharp canvas. This is the
+        /// backend-neutral paint pipeline: a platform backend creates/locks a surface at the physical
+        /// pixel size and calls this. <paramref name="physW"/>/<paramref name="physH"/> are physical
+        /// pixels; <paramref name="scaling"/> is the device scale factor.
+        /// </summary>
+        internal void RenderFrame (SkiaSharp.SKCanvas canvas, int physW, int physH, double scaling)
+        {
+            var skInfo = new SkiaSharp.SKImageInfo (physW, physH, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Premul);
+
+            // Adapter and border widths are in LOGICAL pixels; canvas draws in PHYSICAL pixels.
+            var logicalW = (int)Math.Round (physW / scaling);
+            var logicalH = (int)Math.Round (physH / scaling);
+
+            var border = CurrentStyle.Border;
+            var borderLeft = border.Left.GetWidth ();
+            var borderTop = border.Top.GetWidth ();
+            var physBorderLeft = (int)(borderLeft * scaling);
+            var physBorderTop = (int)(borderTop * scaling);
+            var physBorderRight = (int)(border.Right.GetWidth () * scaling);
+            var physBorderBottom = (int)(border.Bottom.GetWidth () * scaling);
+
+            if (adapter.Left != borderLeft || adapter.Top != borderTop ||
+                adapter.Width != logicalW || adapter.Height != logicalH) {
+                adapter.SetBounds (borderLeft, borderTop, logicalW, logicalH);
+                adapter.PerformLayout ();
+            }
+
+            var e = new PaintEventArgs (skInfo, canvas, scaling);
+
+            OnPaintBackground (e);
+            canvas.DrawBorder (new System.Drawing.Rectangle (0, 0, physW, physH), CurrentStyle);
+            OnPaint (e);
+
+            // Clip canvas to the inner client area (excludes borders).
+            canvas.ClipRect (new SkiaSharp.SKRect (
+                physBorderLeft, physBorderTop,
+                physW - physBorderRight + 1, physH - physBorderBottom + 1));
+
+            adapter.RaisePaintBackground (e);
+            adapter.RaisePaint (e);
+
+            canvas.Flush ();
+        }
+
         /// <summary>Raised when the window is deactivated.</summary>
         public event EventHandler? Deactivated;
 
@@ -111,8 +160,8 @@ namespace Modern.Forms
         public System.Drawing.Rectangle DisplayRectangle => new System.Drawing.Rectangle (
             CurrentStyle.Border.Left.GetWidth (),
             CurrentStyle.Border.Top.GetWidth (),
-            (int)AvWindow.ClientSize.Width - CurrentStyle.Border.Right.GetWidth () - CurrentStyle.Border.Left.GetWidth (),
-            (int)AvWindow.ClientSize.Height - CurrentStyle.Border.Top.GetWidth () - CurrentStyle.Border.Bottom.GetWidth ());
+            Backend.ClientSize.Width - CurrentStyle.Border.Right.GetWidth () - CurrentStyle.Border.Left.GetWidth (),
+            Backend.ClientSize.Height - CurrentStyle.Border.Top.GetWidth () - CurrentStyle.Border.Bottom.GetWidth ());
 
         internal virtual bool HandleMouseDown (int x, int y) => false;
 
@@ -135,7 +184,7 @@ namespace Modern.Forms
         }
 
         /// <summary>Marks the entire window as needing to be redrawn.</summary>
-        public void Invalidate () => AvWindow.IsDirty = true;
+        public void Invalidate () => Backend.Invalidate ();
 
         /// <summary>Marks the specified portion of the window as needing to be redrawn.</summary>
         public void Invalidate (System.Drawing.Rectangle rectangle) => Invalidate ();
@@ -144,24 +193,18 @@ namespace Modern.Forms
         public void BeginInvoke (Action action)
         {
             ArgumentNullException.ThrowIfNull (action);
-            Dispatcher.UIThread.Post (action);
+            Modern.Forms.Backends.Platform.Backend.Post (action);
         }
 
         /// <summary>Executes the specified delegate synchronously on the window's UI thread.</summary>
         public void Invoke (Action action)
         {
             ArgumentNullException.ThrowIfNull (action);
-
-            if (Dispatcher.UIThread.CheckAccess ()) {
-                action ();
-                return;
-            }
-
-            Dispatcher.UIThread.InvokeAsync (action).GetAwaiter ().GetResult ();
+            Modern.Forms.Backends.Platform.Backend.Invoke (action);
         }
 
         /// <summary>Gets the unscaled location of the window.</summary>
-        public System.Drawing.Point Location => new System.Drawing.Point (AvWindow.Position.X, AvWindow.Position.Y);
+        public System.Drawing.Point Location => Backend.Location;
 
         /// <summary>Raised when the MaximumSize property is changed.</summary>
         public event EventHandler? MaximumSizeChanged;
@@ -169,18 +212,10 @@ namespace Modern.Forms
         /// <summary>Raised when the MinimumSize property is changed.</summary>
         public event EventHandler? MinimumSizeChanged;
 
-        // ── Avalonia input event handlers (called from ModernFormsWindowHost) ─────────────────────
+        // ── Neutral input handlers (the platform backend translates native input and calls these) ──
 
-        internal void OnAvaloniaPointerPressed (Avalonia.Input.PointerPressedEventArgs e)
+        internal void HandlePointerPressed (MouseButtons button, int x, int y, Keys keys)
         {
-            var pos = e.GetPosition (AvWindow);
-            var x = (int)(pos.X * Scaling);
-            var y = (int)(pos.Y * Scaling);
-
-            var props = e.GetCurrentPoint (AvWindow).Properties;
-            var button = AvaloniaKeyInterop.PressedButton (props.PointerUpdateKind);
-            var keys = AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers);
-
             if (Resizeable && HandleMouseDown (x, y))
                 return;
 
@@ -188,18 +223,9 @@ namespace Modern.Forms
             adapter.RaiseMouseDown (ev);
         }
 
-        internal void OnAvaloniaPointerReleased (Avalonia.Input.PointerReleasedEventArgs e)
+        internal void HandlePointerReleased (MouseButtons button, int x, int y, Keys keys)
         {
-            var pos = e.GetPosition (AvWindow);
-            var x = (int)(pos.X * Scaling);
-            var y = (int)(pos.Y * Scaling);
-
-            var props = e.GetCurrentPoint (AvWindow).Properties;
-            var button = AvaloniaKeyInterop.ReleasedButton (props.PointerUpdateKind);
-            var keys = AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers);
-            var point = new System.Drawing.Point (x, y);
-
-            var ev = BuildMouseClickArgs (button, point, keys);
+            var ev = BuildMouseClickArgs (button, new System.Drawing.Point (x, y), keys);
 
             if (ev.Clicks > 1)
                 adapter.RaiseDoubleClick (ev);
@@ -208,16 +234,8 @@ namespace Modern.Forms
             adapter.RaiseMouseUp (ev);
         }
 
-        internal void OnAvaloniaPointerMoved (Avalonia.Input.PointerEventArgs e)
+        internal void HandlePointerMoved (MouseButtons buttons, int x, int y, Keys keys)
         {
-            var pos = e.GetPosition (AvWindow);
-            var x = (int)(pos.X * Scaling);
-            var y = (int)(pos.Y * Scaling);
-
-            var props = e.GetCurrentPoint (AvWindow).Properties;
-            var buttons = AvaloniaKeyInterop.ToMouseButtons (props);
-            var keys = AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers);
-
             if (Resizeable && HandleMouseMove (x, y))
                 return;
 
@@ -225,38 +243,21 @@ namespace Modern.Forms
             adapter.RaiseMouseMove (ev);
         }
 
-        internal void OnAvaloniaPointerWheel (Avalonia.Input.PointerWheelEventArgs e)
+        internal void HandlePointerWheel (MouseButtons buttons, int x, int y, System.Drawing.Point delta, Keys keys)
         {
-            var pos = e.GetPosition (AvWindow);
-            var x = (int)(pos.X * Scaling);
-            var y = (int)(pos.Y * Scaling);
-
-            var props = e.GetCurrentPoint (AvWindow).Properties;
-            var buttons = AvaloniaKeyInterop.ToMouseButtons (props);
-            var keys = AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers);
-
-            var delta = new System.Drawing.Point ((int)e.Delta.X, (int)e.Delta.Y);
             var ev = new MouseEventArgs (buttons, 0, x, y, delta, keyData: keys);
             adapter.RaiseMouseWheel (ev);
         }
 
-        internal void OnAvaloniaPointerExited (Avalonia.Input.PointerEventArgs e)
+        internal void HandlePointerExited (MouseButtons buttons, int x, int y, Keys keys)
         {
-            var pos = e.GetPosition (AvWindow);
-            var x = (int)(pos.X * Scaling);
-            var y = (int)(pos.Y * Scaling);
-
-            var props = e.GetCurrentPoint (AvWindow).Properties;
-            var buttons = AvaloniaKeyInterop.ToMouseButtons (props);
-            var keys = AvaloniaKeyInterop.ModifiersOnly (e.KeyModifiers);
-
             var ev = new MouseEventArgs (buttons, 0, x, y, System.Drawing.Point.Empty, keyData: keys);
             adapter.RaiseMouseLeave (ev);
         }
 
-        internal void OnAvaloniaKeyDown (Avalonia.Input.KeyEventArgs e)
+        /// <summary>Routes a key-down. Returns true if handled (the backend should suppress further native processing).</summary>
+        internal bool HandleKeyDown (Keys keys)
         {
-            var keys = AvaloniaKeyInterop.AddModifiers (AvaloniaKeyInterop.ToFormsKey (e.Key), e.KeyModifiers);
             var kd_e = new KeyEventArgs (keys);
 
             // Form-level shortcuts: AcceptButton / CancelButton / modal Escape
@@ -265,83 +266,69 @@ namespace Modern.Forms
 
                 if (baseKey == Keys.Return && form.AcceptButton != null) {
                     form.AcceptButton.PerformClick ();
-                    e.Handled = true;
-                    return;
+                    return true;
                 }
 
                 if (baseKey == Keys.Escape) {
                     if (form.CancelButton != null) {
                         form.CancelButton.PerformClick ();
-                        e.Handled = true;
-                        return;
+                        return true;
                     }
 
                     if (form.dialog_task is not null) {
                         form.DialogResult = DialogResult.Cancel;
-                        e.Handled = true;
-                        return;
+                        return true;
                     }
                 }
 
                 // KeyPreview: let the form see the key first
                 if (form.KeyPreview) {
                     OnKeyDown (kd_e);
-                    if (kd_e.Handled) { e.Handled = true; return; }
+                    if (kd_e.Handled)
+                        return true;
                     adapter.RaiseKeyDown (kd_e);
-                    if (kd_e.Handled) e.Handled = true;
-                    return;
+                    return kd_e.Handled;
                 }
             }
 
             OnKeyDown (kd_e);
 
-            if (kd_e.Handled) {
-                e.Handled = true;
-                return;
-            }
+            if (kd_e.Handled)
+                return true;
 
             adapter.RaiseKeyDown (kd_e);
-
-            if (kd_e.Handled)
-                e.Handled = true;
+            return kd_e.Handled;
         }
 
-        internal void OnAvaloniaKeyUp (Avalonia.Input.KeyEventArgs e)
+        /// <summary>Routes a key-up. Returns true if handled.</summary>
+        internal bool HandleKeyUp (Keys keys)
         {
-            var keys = AvaloniaKeyInterop.AddModifiers (AvaloniaKeyInterop.ToFormsKey (e.Key), e.KeyModifiers);
             var ku_e = new KeyEventArgs (keys);
 
             OnKeyUp (ku_e);
 
-            if (ku_e.Handled) {
-                e.Handled = true;
-                return;
-            }
+            if (ku_e.Handled)
+                return true;
 
             adapter.RaiseKeyUp (ku_e);
-
-            if (ku_e.Handled)
-                e.Handled = true;
+            return ku_e.Handled;
         }
 
-        internal void OnAvaloniaTextInput (Avalonia.Input.TextInputEventArgs e)
+        /// <summary>Routes text input. Returns true if handled.</summary>
+        internal bool HandleTextInput (string text)
         {
-            if (string.IsNullOrEmpty (e.Text))
-                return;
+            if (string.IsNullOrEmpty (text))
+                return false;
 
-            var kp_e = new KeyPressEventArgs (e.Text, Keys.None);
+            var kp_e = new KeyPressEventArgs (text, Keys.None);
 
             OnKeyPress (kp_e);
 
-            if (kp_e.Handled) {
-                e.Handled = true;
-                return;
-            }
+            if (kp_e.Handled)
+                return true;
 
             adapter.RaiseKeyPress (kp_e);
-
-            if (kp_e.Handled)
-                e.Handled = true;
+            return kp_e.Handled;
         }
 
         /// <summary>Raises the MaximumSizeChanged event.</summary>
@@ -376,25 +363,17 @@ namespace Modern.Forms
         }
 
         /// <summary>Converts a point from screen coordinates to window coordinates.</summary>
-        public System.Drawing.Point PointToClient (System.Drawing.Point point)
-        {
-            var pt = AvWindow.PointToClient (new PixelPoint (point.X, point.Y));
-            return new System.Drawing.Point ((int)pt.X, (int)pt.Y);
-        }
+        public System.Drawing.Point PointToClient (System.Drawing.Point point) => Backend.PointToClient (point);
 
         /// <summary>Converts a point from window coordinates to screen coordinates.</summary>
-        public System.Drawing.Point PointToScreen (System.Drawing.Point point)
-        {
-            var pt = AvWindow.PointToScreen (new Avalonia.Point (point.X, point.Y));
-            return new System.Drawing.Point (pt.X, pt.Y);
-        }
+        public System.Drawing.Point PointToScreen (System.Drawing.Point point) => Backend.PointToScreen (point);
 
         /// <summary>Gets or sets whether the window is resizable.</summary>
         public bool Resizeable { get; set; }
 
         private System.Drawing.Size ScaledClientSize => new System.Drawing.Size (
-            (int)(AvWindow.ClientSize.Width * Scaling),
-            (int)(AvWindow.ClientSize.Height * Scaling));
+            (int)(Backend.ClientSize.Width * Scaling),
+            (int)(Backend.ClientSize.Height * Scaling));
 
         /// <summary>Gets the scaled bounds of the form not including borders.</summary>
         public System.Drawing.Rectangle ScaledDisplayRectangle => new System.Drawing.Rectangle (
@@ -407,10 +386,10 @@ namespace Modern.Forms
         public System.Drawing.Size ScaledSize => ScaledClientSize;
 
         /// <summary>Gets the current scale factor of the window.</summary>
-        public double Scaling => AvWindow.RenderScaling;
+        public double Scaling => Backend.Scaling;
 
         /// <summary>Gets the current scale factor of the desktop.</summary>
-        public double DesktopScaling => AvWindow.RenderScaling;
+        public double DesktopScaling => Backend.Scaling;
 
         internal Avalonia.Controls.Screens Screens => AvWindow.Screens;
 
@@ -459,8 +438,8 @@ namespace Modern.Forms
 
         /// <summary>Gets the unscaled size of the window.</summary>
         public System.Drawing.Size Size => new System.Drawing.Size (
-            (int)AvWindow.ClientSize.Width,
-            (int)AvWindow.ClientSize.Height);
+            Backend.ClientSize.Width,
+            Backend.ClientSize.Height);
 
         /// <summary>Gets or sets the startup location of the window.</summary>
         public FormStartPosition StartPosition { get; set; } = FormStartPosition.CenterScreen;

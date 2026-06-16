@@ -517,38 +517,15 @@ namespace Modern.Forms
         public static Color ToDrawingColor (this SKColor color) => Color.FromArgb (color.Alpha, color.Red, color.Green, color.Blue);
     }
 
-    /// <summary>Extension methods for converting between System.Drawing bitmaps and SkiaSharp bitmaps.</summary>
+    /// <summary>Extension methods for converting <see cref="Modern.Drawing.Image"/> to SkiaSharp bitmaps. Fully cross-platform (Skia-backed, no GDI+).</summary>
     public static class BitmapCompatExtensions
     {
-        /// <summary>
-        /// Converts a <see cref="Modern.Drawing.Bitmap"/> to an <see cref="SkiaSharp.SKBitmap"/> via PNG MemoryStream.
-        /// Requires System.Drawing.Common to be functional on this platform.
-        /// </summary>
-#pragma warning disable CA1416
+        /// <summary>Returns a copy of the SkiaSharp bitmap backing the given <see cref="Modern.Drawing.Bitmap"/>.</summary>
         public static SkiaSharp.SKBitmap? ToSKBitmap (this Modern.Drawing.Bitmap bitmap)
-        {
-            if (bitmap == null)
-                return null;
+            => bitmap?.GetSKBitmap ()?.Copy ();
 
-            using var ms = new System.IO.MemoryStream ();
-            bitmap.Save (ms, Modern.Drawing.Imaging.ImageFormat.Png);
-            ms.Seek (0, System.IO.SeekOrigin.Begin);
-            return SkiaSharp.SKBitmap.Decode (ms);
-        }
-
-        /// <summary>
-        /// Converts a <see cref="Modern.Drawing.Image"/> to an <see cref="SkiaSharp.SKBitmap"/> via PNG MemoryStream.
-        /// </summary>
+        /// <summary>Returns a copy of the SkiaSharp bitmap backing the given <see cref="Modern.Drawing.Image"/>.</summary>
         public static SkiaSharp.SKBitmap? ToSKBitmap (this Modern.Drawing.Image image)
-        {
-            if (image == null)
-                return null;
-
-            using var ms = new System.IO.MemoryStream ();
-            image.Save (ms, Modern.Drawing.Imaging.ImageFormat.Png);
-            ms.Seek (0, System.IO.SeekOrigin.Begin);
-            return SkiaSharp.SKBitmap.Decode (ms);
-        }
-#pragma warning restore CA1416
+            => image?.GetSKBitmap ()?.Copy ();
     }
 }
