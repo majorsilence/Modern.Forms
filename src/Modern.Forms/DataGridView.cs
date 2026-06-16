@@ -1110,6 +1110,21 @@ namespace Modern.Forms
                     SelectedColumnIndex = col;
                 }
 
+                // Toggle check-box cells on click (covers DataGridViewCheckBoxColumn and any column
+                // that renders as a check box, e.g. the Telerik-compat GridViewCheckBoxColumn).
+                if (col >= 0 && col < Columns.Count
+                    && (Columns[col] is DataGridViewCheckBoxColumn || Columns[col].DisplaysAsCheckBox)
+                    && row < Rows.Count && col < Rows[row].Cells.Count) {
+                    var cell = Rows[row].Cells[col];
+
+                    if (!cell.ReadOnly) {
+                        var current = cell.Value is bool b ? b
+                            : string.Equals (cell.Value?.ToString (), "True", StringComparison.OrdinalIgnoreCase) || cell.Value?.ToString () == "1";
+                        cell.Value = !current;
+                        OnCellValueChanged (new DataGridViewCellEditEventArgs (row, col));
+                    }
+                }
+
                 CellClick?.Invoke (this, new DataGridViewCellEventArgs (col, row));
             }
         }
@@ -1321,7 +1336,7 @@ namespace Modern.Forms
         /// <summary>
         /// Called when the column collection changes.
         /// </summary>
-        internal void OnColumnsChanged ()
+        internal virtual void OnColumnsChanged ()
         {
             UpdateScrollBars ();
             Invalidate ();

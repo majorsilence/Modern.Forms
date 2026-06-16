@@ -58,26 +58,21 @@ namespace Modern.Forms.Telerik
     public class RadMenuSeparatorItem : MenuSeparatorItem { }
 
     /// <summary>Telerik-compat property grid. Backed by <see cref="Modern.Forms.Control"/>.</summary>
-    public class RadPropertyGrid : Control
+    public class RadPropertyGrid : PropertyGrid
     {
-        /// <summary>Gets the property items. Stub list.</summary>
+        // SelectedObject, PropertySort, ToolbarVisible, SelectedGridItem and the rendering of the
+        // inspected object's properties are inherited from Modern.Forms.PropertyGrid.
+
+        /// <summary>Gets the property items. Stub list (Telerik exposes individual property items).</summary>
         public List<object> Items { get; } = new ();
         /// <summary>Gets the property groups. Stub list.</summary>
         public List<object> Groups { get; } = new ();
-        /// <summary>Gets or sets the inspected object.</summary>
-        public object? SelectedObject { get; set; }
-        /// <summary>Gets or sets the selected grid item. Stub.</summary>
-        public object? SelectedGridItem { get; set; }
-        /// <summary>Gets or sets the property sort mode.</summary>
-        public PropertySort PropertySort { get; set; } = PropertySort.CategorizedAlphabetical;
         /// <summary>Gets or sets the sort order. Stub.</summary>
         public object? SortOrder { get; set; }
-        /// <summary>Gets or sets whether sorting is enabled.</summary>
+        /// <summary>Gets or sets whether sorting is enabled. Stub.</summary>
         public bool EnableSorting { get; set; } = true;
         /// <summary>Gets the sort descriptors. Stub list.</summary>
         public List<object> SortDescriptors { get; } = new ();
-        /// <summary>Gets or sets whether the toolbar is visible.</summary>
-        public bool ToolbarVisible { get; set; } = true;
         /// <summary>Gets the root element (stub).</summary>
         public RadElement RootElement { get; } = new RadElement ();
 

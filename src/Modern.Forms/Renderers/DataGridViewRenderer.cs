@@ -84,7 +84,7 @@ namespace Modern.Forms.Renderers
             var font = control.ColumnHeadersDefaultCellStyle.Font ?? Theme.UIFontBold;
             var font_size = control.ColumnHeadersDefaultCellStyle.FontSize ?? Theme.ItemFontSize;
 
-            e.Canvas.DrawText (column.HeaderText, font, control.LogicalToDeviceUnits (font_size), text_bounds, fg, ContentAlignment.MiddleLeft, maxLines: 1);
+            e.Canvas.DrawText (column.HeaderText, font, control.LogicalToDeviceUnits (font_size), text_bounds, fg, column.HeaderAlignment, maxLines: 1);
 
             // Draw sort indicator
             if (column.SortOrder != SortOrder.None)
@@ -187,15 +187,16 @@ namespace Modern.Forms.Renderers
                 var col_width = control.LogicalToDeviceUnits (column.Width);
                 var cell_rect = new Rectangle (x, bounds.Top, col_width, bounds.Height);
 
-                var cell_value = i < row.Cells.Count ? row.Cells[i].Value?.ToString () ?? string.Empty : string.Empty;
-
                 if (i < row.Cells.Count)
                     row.Cells[i].Bounds = cell_rect;
 
-                // Let subclasses apply cell-level formatting before the cell style is read.
+                // Let subclasses apply cell-level formatting (colors + a display-text override) before
+                // the value and style are read for drawing.
                 control.RaiseCellFormatting (row, rowIndex, i);
 
-                var cell_style = i < row.Cells.Count ? row.Cells[i].Style : null;
+                var the_cell = i < row.Cells.Count ? row.Cells[i] : null;
+                var cell_value = the_cell?.FormattedTextOverride ?? the_cell?.Value?.ToString () ?? string.Empty;
+                var cell_style = the_cell?.Style;
                 RenderCell (control, column, cell_value, rowIndex, i, cell_rect, cell_style, e);
 
                 x += col_width;
@@ -259,7 +260,7 @@ namespace Modern.Forms.Renderers
             var font_size = cellStyle?.FontSize ?? control.DefaultCellStyle.FontSize ?? Theme.ItemFontSize;
             var scaled_font = control.LogicalToDeviceUnits (font_size);
 
-            if (column is DataGridViewCheckBoxColumn) {
+            if (column is DataGridViewCheckBoxColumn || column.DisplaysAsCheckBox) {
                 RenderCheckBoxCell (e, bounds, value);
             } else if (column is DataGridViewButtonColumn btn_col) {
                 var btn_text = btn_col.UseColumnTextForButtonValue ? btn_col.HeaderText : value;
@@ -267,7 +268,7 @@ namespace Modern.Forms.Renderers
             } else if (column is DataGridViewComboBoxColumn) {
                 RenderComboBoxCell (e, text_bounds, value, font, scaled_font, fg);
             } else {
-                e.Canvas.DrawText (value, font, scaled_font, text_bounds, fg, ContentAlignment.MiddleLeft, maxLines: 1);
+                e.Canvas.DrawText (value, font, scaled_font, text_bounds, fg, column.DefaultCellStyleAlignment, maxLines: 1);
             }
         }
 

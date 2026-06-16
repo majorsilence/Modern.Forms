@@ -86,7 +86,14 @@ namespace Modern.Forms
         }
 
         /// <summary>Gets the formatted (display) value of this cell.</summary>
-        public object? FormattedValue => value?.ToString ();
+        public object? FormattedValue => FormattedTextOverride ?? value?.ToString ();
+
+        /// <summary>
+        /// An optional display-text override set by a formatting pass (e.g. RadGridView's CellFormatting
+        /// or a column FormatString). When set, the renderer draws this instead of the raw value. Reset
+        /// each paint by the formatting hook so it never goes stale.
+        /// </summary>
+        internal string? FormattedTextOverride { get; set; }
 
         /// <summary>Gets or sets whether this cell is read-only.</summary>
         public bool ReadOnly { get; set; }

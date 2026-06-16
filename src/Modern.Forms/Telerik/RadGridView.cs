@@ -91,8 +91,30 @@ namespace Modern.Forms.Telerik
         public bool MultiSelect { get => MasterTemplate.MultiSelect; set => MasterTemplate.MultiSelect = value; }
         /// <summary>Gets or sets whether filtering is enabled.</summary>
         public bool EnableFiltering { get => MasterTemplate.EnableFiltering; set => MasterTemplate.EnableFiltering = value; }
-        /// <summary>Gets or sets whether sorting is enabled.</summary>
-        public bool EnableSorting { get => MasterTemplate.EnableSorting; set => MasterTemplate.EnableSorting = value; }
+        /// <summary>Gets or sets whether sorting is enabled. When false, header-click sorting is disabled for every column.</summary>
+        public bool EnableSorting {
+            get => MasterTemplate.EnableSorting;
+            set { MasterTemplate.EnableSorting = value; ApplyEnableSorting (); }
+        }
+
+        // When sorting is disabled grid-wide, force every column non-sortable (the base only sorts
+        // columns whose Sortable flag is true). Applied on set and whenever the column set changes.
+        private void ApplyEnableSorting ()
+        {
+            // MasterTemplate may be null if a base-ctor column change fires before our ctor body runs.
+            if (MasterTemplate is null || MasterTemplate.EnableSorting)
+                return;
+
+            foreach (DataGridViewColumn column in base.Columns)
+                column.Sortable = false;
+        }
+
+        /// <inheritdoc/>
+        internal override void OnColumnsChanged ()
+        {
+            base.OnColumnsChanged ();
+            ApplyEnableSorting ();
+        }
         /// <summary>Gets or sets whether grouped data auto-expands.</summary>
         public bool AutoExpandGroups { get => MasterTemplate.AutoExpandGroups; set => MasterTemplate.AutoExpandGroups = value; }
         /// <summary>Gets or sets whether the group panel is shown. Stub.</summary>
@@ -102,8 +124,38 @@ namespace Modern.Forms.Telerik
         /// <summary>Gets or sets whether alternating rows are colored. Stub.</summary>
         public bool EnableAlternatingRowColor { get; set; }
 
-        /// <summary>Auto-sizes all columns to fit their content. Delegates to the base auto-size pass.</summary>
-        public void BestFitColumns () => Invalidate ();
+        /// <summary>Auto-sizes every visible column to fit its header and (formatted) cell content.</summary>
+        public void BestFitColumns ()
+        {
+            const int padding = 18;
+            var fontSize = Theme.ItemFontSize;
+
+            foreach (DataGridViewColumn column in base.Columns) {
+                if (!column.Visible)
+                    continue;
+
+                var width = (int)TextMeasurer.MeasureText (column.HeaderText ?? string.Empty, Theme.UIFontBold, fontSize).Width;
+                var columnIndex = column.Index;
+
+                // Check-box columns render a fixed-size glyph, so size to the header only.
+                if (!column.DisplaysAsCheckBox && columnIndex >= 0) {
+                    foreach (var row in base.Rows) {
+                        if (columnIndex >= row.Cells.Count)
+                            continue;
+
+                        var text = ComputeFormattedText (row.Cells[columnIndex], column);
+                        var w = (int)TextMeasurer.MeasureText (text, Theme.UIFont, fontSize).Width;
+
+                        if (w > width)
+                            width = w;
+                    }
+                }
+
+                column.Width = Math.Max (column.MinimumWidth, width + padding);
+            }
+
+            Invalidate ();
+        }
 
         /// <summary>Begins a batch update. Stub.</summary>
         public void BeginUpdate () { }
@@ -144,17 +196,59 @@ namespace Modern.Forms.Telerik
         public event EventHandler<GridViewCellFormattingEventArgs>? ViewCellFormatting { add => _viewCellFormatting += value; remove => _viewCellFormatting -= value; }
         /// <summary>Raised when a row is being formatted. Set <c>e.RowElement.BackColor</c> (with <c>DrawFill=true</c>) to color the row.</summary>
         public event EventHandler<GridViewRowFormattingEventArgs>? RowFormatting { add => _rowFormatting += value; remove => _rowFormatting -= value; }
-        /// <summary>Raised when the context menu is opening. Declared for source compatibility; not yet raised.</summary>
-        public event EventHandler? ContextMenuOpening { add { } remove { } }
+        private EventHandler<ContextMenuOpeningEventArgs>? _contextMenuOpening;
+
+        /// <summary>
+        /// Raised on right-click before the context menu is shown. Handlers populate
+        /// <c>e.ContextMenu.Items</c> (with <see cref="RadMenuItem"/>s); the populated menu is then shown.
+        /// </summary>
+        public event EventHandler<ContextMenuOpeningEventArgs>? ContextMenuOpening { add => _contextMenuOpening += value; remove => _contextMenuOpening -= value; }
+
+        /// <inheritdoc/>
+        protected override void OnClick (MouseEventArgs e)
+        {
+            // Telerik raises ContextMenuOpening on right-click so handlers can build the menu; show it.
+            if (e.Button == MouseButtons.Right && _contextMenuOpening is not null) {
+                var args = new ContextMenuOpeningEventArgs { RowElement = RowElementUnder (e.Location) };
+                _contextMenuOpening.Invoke (this, args);
+
+                if (args.ContextMenu.Items.Count > 0) {
+                    var menu = new ContextMenu ();
+                    foreach (var item in args.ContextMenu.Items)
+                        if (item is MenuItem menuItem)
+                            menu.Items.Add (menuItem);
+
+                    if (menu.Items.Count > 0) {
+                        menu.Show (this, PointToScreen (e.Location));
+                        return;
+                    }
+                }
+            }
+
+            base.OnClick (e);
+        }
+
+        // Best-effort hit-test: returns a row element for the row whose cell contains the point, or null.
+        private GridViewRowElement? RowElementUnder (Point location)
+        {
+            foreach (var row in base.Rows)
+                foreach (DataGridViewCell cell in row.Cells)
+                    if (cell.Bounds.Contains (location))
+                        return new GridViewRowElement { RowInfo = new GridViewRowInfo (row) };
+
+            return null;
+        }
 
         /// <inheritdoc/>
         protected internal override void RaiseRowFormatting (DataGridViewRow row, int rowIndex)
         {
-            // Clear the per-cell colors we manage so conditional formatting doesn't leave stale colors
-            // from a previous frame; alternating-row striping (drawn at row level) still shows through.
+            // Clear the per-cell colors and text overrides we manage so conditional formatting doesn't
+            // leave stale values from a previous frame; alternating-row striping (drawn at row level)
+            // still shows through.
             foreach (DataGridViewCell cell in row.Cells) {
                 cell.Style.BackgroundColor = null;
                 cell.Style.ForegroundColor = null;
+                cell.FormattedTextOverride = null;
             }
 
             if (_rowFormatting is null)
@@ -179,31 +273,68 @@ namespace Modern.Forms.Telerik
         /// <inheritdoc/>
         protected internal override void RaiseCellFormatting (DataGridViewRow row, int rowIndex, int columnIndex)
         {
-            if ((_cellFormatting is null && _viewCellFormatting is null) || columnIndex < 0 || columnIndex >= row.Cells.Count)
+            if (columnIndex < 0 || columnIndex >= row.Cells.Count)
                 return;
 
             var cell = row.Cells[columnIndex];
-            var element = new GridViewCellElement {
-                Value = cell.Value,
-                Text = cell.Value?.ToString () ?? string.Empty,
-                RowIndex = rowIndex,
-                ColumnInfo = columnIndex < base.Columns.Count ? base.Columns[columnIndex] : null,
-                RowInfo = new GridViewRowInfo (row)
-            };
+            var column = columnIndex < base.Columns.Count ? base.Columns[columnIndex] : null;
 
-            var args = new GridViewCellFormattingEventArgs {
-                CellElement = element, RowIndex = rowIndex, ColumnIndex = columnIndex,
-                Value = cell.Value, Row = element.RowInfo, Column = element.ColumnInfo
-            };
+            var originalText = cell.Value?.ToString () ?? string.Empty;
+            var displayText = ComputeFormattedText (cell, column);
 
-            _cellFormatting?.Invoke (this, args);
-            _viewCellFormatting?.Invoke (this, args);
+            // Raise the Telerik formatting events (handlers may further change Text / colors).
+            if (_cellFormatting is not null || _viewCellFormatting is not null) {
+                var element = new GridViewCellElement {
+                    Value = cell.Value,
+                    Text = displayText,
+                    RowIndex = rowIndex,
+                    ColumnInfo = column,
+                    RowInfo = new GridViewRowInfo (row)
+                };
 
-            // Cell formatting overrides any row-level color for this specific cell.
-            if (element.BackColor != Color.Empty)
-                cell.Style.BackgroundColor = ToSK (element.BackColor);
-            if (element.ForeColor != Color.Empty)
-                cell.Style.ForegroundColor = ToSK (element.ForeColor);
+                var args = new GridViewCellFormattingEventArgs {
+                    CellElement = element, RowIndex = rowIndex, ColumnIndex = columnIndex,
+                    Value = cell.Value, Row = element.RowInfo, Column = column
+                };
+
+                _cellFormatting?.Invoke (this, args);
+                _viewCellFormatting?.Invoke (this, args);
+
+                displayText = element.Text;
+
+                // Cell formatting overrides any row-level color for this specific cell.
+                if (element.BackColor != Color.Empty)
+                    cell.Style.BackgroundColor = ToSK (element.BackColor);
+                if (element.ForeColor != Color.Empty)
+                    cell.Style.ForegroundColor = ToSK (element.ForeColor);
+            }
+
+            // Only override the displayed text when formatting actually changed it.
+            if (!string.Equals (displayText, originalText, StringComparison.Ordinal))
+                cell.FormattedTextOverride = displayText;
+        }
+
+        // Computes a cell's display text: a combo column resolves the stored value to its display text
+        // (foreign-key → name); otherwise the column's FormatString is applied; else the raw value.
+        private static string ComputeFormattedText (DataGridViewCell cell, DataGridViewColumn? column)
+        {
+            if (column is GridViewComboBoxColumn combo && combo.LookupDisplay (cell.Value) is string comboDisplay)
+                return comboDisplay;
+            if (column is GridViewColumn gvc && !string.IsNullOrEmpty (gvc.FormatString) && cell.Value is not null)
+                return FormatValue (gvc.FormatString, cell.Value);
+            return cell.Value?.ToString () ?? string.Empty;
+        }
+
+        // Applies a Telerik/.NET format string, supporting both composite ("{0:C2}") and bare ("C2") forms.
+        private static string FormatValue (string format, object value)
+        {
+            try {
+                return format.Contains ("{0")
+                    ? string.Format (format, value)
+                    : string.Format ("{0:" + format + "}", value);
+            } catch {
+                return value?.ToString () ?? string.Empty;
+            }
         }
 
         private static SKColor ToSK (Color c) => new SKColor (c.R, c.G, c.B, c.A);
@@ -315,10 +446,16 @@ namespace Modern.Forms.Telerik
         }
         /// <summary>Gets or sets the .NET format string applied to values. Stub.</summary>
         public string FormatString { get; set; } = string.Empty;
-        /// <summary>Gets or sets the text alignment. Stub.</summary>
-        public ContentAlignment TextAlignment { get; set; } = ContentAlignment.MiddleLeft;
-        /// <summary>Gets or sets the header text alignment. Stub.</summary>
-        public ContentAlignment HeaderTextAlignment { get; set; } = ContentAlignment.MiddleLeft;
+        /// <summary>Gets or sets the cell text alignment (forwards to the rendered cell alignment).</summary>
+        public ContentAlignment TextAlignment {
+            get => DefaultCellStyleAlignment;
+            set => DefaultCellStyleAlignment = value;
+        }
+        /// <summary>Gets or sets the header text alignment (forwards to the rendered header alignment).</summary>
+        public ContentAlignment HeaderTextAlignment {
+            get => HeaderAlignment;
+            set => HeaderAlignment = value;
+        }
         /// <summary>Gets or sets whether the column appears in the column chooser. Stub.</summary>
         public bool VisibleInColumnChooser { get; set; } = true;
         /// <summary>Gets or sets the pinned position. Stub.</summary>
@@ -329,8 +466,11 @@ namespace Modern.Forms.Telerik
         public bool AllowReorder { get; set; } = true;
         /// <summary>Gets or sets whether filtering is allowed. Stub.</summary>
         public bool AllowFiltering { get; set; } = true;
-        /// <summary>Gets or sets whether sorting is allowed. Stub.</summary>
-        public bool AllowSort { get; set; } = true;
+        /// <summary>Gets or sets whether this column can be sorted (forwards to the base sortable flag).</summary>
+        public bool AllowSort {
+            get => Sortable;
+            set => Sortable = value;
+        }
         /// <summary>Gets or sets the column data type. Stub.</summary>
         public Type? DataType { get; set; }
         /// <summary>Gets the conditional-formatting object list. Stub.</summary>
@@ -371,6 +511,76 @@ namespace Modern.Forms.Telerik
         public string ValueMember { get; set; } = string.Empty;
         /// <summary>Gets or sets whether the column was auto-generated. Stub.</summary>
         public bool IsAutoGenerated { get; set; }
+
+        private object? _cachedSource;
+        private Dictionary<string, string>? _lookup;
+
+        /// <summary>
+        /// Resolves a stored cell value to its display text using <see cref="DataSource"/>,
+        /// <see cref="ValueMember"/> and <see cref="DisplayMember"/> (the foreign-key-to-name lookup a
+        /// Telerik combo column performs). Returns null if no mapping applies. Result is cached per
+        /// DataSource reference.
+        /// </summary>
+        internal string? LookupDisplay (object? value)
+        {
+            if (value is null || DataSource is null || string.IsNullOrEmpty (ValueMember) || string.IsNullOrEmpty (DisplayMember))
+                return null;
+
+            if (!ReferenceEquals (_cachedSource, DataSource) || _lookup is null) {
+                _lookup = BuildLookup ();
+                _cachedSource = DataSource;
+            }
+
+            return _lookup is not null && _lookup.TryGetValue (value.ToString () ?? string.Empty, out var display) ? display : null;
+        }
+
+        private Dictionary<string, string>? BuildLookup ()
+        {
+            var items = AsEnumerable (DataSource);
+            if (items is null)
+                return null;
+
+            var map = new Dictionary<string, string> ();
+
+            foreach (var item in items) {
+                if (item is null)
+                    continue;
+
+                var key = GetMemberValue (item, ValueMember)?.ToString ();
+                var display = GetMemberValue (item, DisplayMember)?.ToString ();
+
+                if (key is not null && display is not null)
+                    map[key] = display;
+            }
+
+            return map;
+        }
+
+        // Normalizes the common DataSource shapes (DataTable / DataView / IListSource / IEnumerable) to items.
+        private static IEnumerable? AsEnumerable (object? source) => source switch {
+            System.Data.DataTable t => t.Rows.Cast<System.Data.DataRow> (),
+            System.Data.DataView v => v.Cast<System.Data.DataRowView> (),
+            System.ComponentModel.IListSource ls => ls.GetList (),
+            IEnumerable e => e,
+            _ => null
+        };
+
+        // Reads a named member, supporting DataRow/DataRowView columns and CLR properties.
+        private static object? GetMemberValue (object item, string member)
+        {
+            try {
+                switch (item) {
+                    case System.Data.DataRowView drv:
+                        return drv.Row.Table.Columns.Contains (member) ? drv[member] : null;
+                    case System.Data.DataRow dr:
+                        return dr.Table.Columns.Contains (member) ? dr[member] : null;
+                    default:
+                        return item.GetType ().GetProperty (member)?.GetValue (item);
+                }
+            } catch {
+                return null;
+            }
+        }
     }
 
     /// <summary>Telerik-compat check-box column.</summary>
@@ -380,6 +590,9 @@ namespace Modern.Forms.Telerik
         public GridViewCheckBoxColumn () { }
         /// <summary>Initializes a new instance bound to the specified field.</summary>
         public GridViewCheckBoxColumn (string fieldName) { FieldName = fieldName; Name = fieldName; }
+
+        /// <inheritdoc/>
+        protected internal override bool DisplaysAsCheckBox => true;
     }
 
     /// <summary>Telerik-compat decimal column.</summary>

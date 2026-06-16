@@ -145,6 +145,15 @@ namespace Modern.Forms
         /// <summary>Gets or sets the column cell content alignment.</summary>
         public ContentAlignment DefaultCellStyleAlignment { get; set; } = ContentAlignment.MiddleLeft;
 
+        /// <summary>Gets or sets the alignment of the column header text.</summary>
+        public ContentAlignment HeaderAlignment { get; set; } = ContentAlignment.MiddleLeft;
+
+        /// <summary>
+        /// When true, the renderer draws a check-box glyph instead of text for this column's cells.
+        /// Default false; check-box column types (including the Telerik-compat GridViewCheckBoxColumn) override.
+        /// </summary>
+        protected internal virtual bool DisplaysAsCheckBox => false;
+
         /// <summary>
         /// Gets or sets the width, in pixels, of the column.
         /// </summary>
