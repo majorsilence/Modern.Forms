@@ -164,6 +164,9 @@ namespace Modern.Forms.Renderers
             if (bg.HasValue)
                 e.Canvas.FillRectangle (bounds, bg.Value);
 
+            // Let subclasses apply row-level formatting (clears + sets per-cell styles for this frame).
+            control.RaiseRowFormatting (row, rowIndex);
+
             // Draw row header
             if (control.RowHeadersVisible) {
                 var rh_width = control.ScaledRowHeadersWidth;
@@ -188,6 +191,9 @@ namespace Modern.Forms.Renderers
 
                 if (i < row.Cells.Count)
                     row.Cells[i].Bounds = cell_rect;
+
+                // Let subclasses apply cell-level formatting before the cell style is read.
+                control.RaiseCellFormatting (row, rowIndex, i);
 
                 var cell_style = i < row.Cells.Count ? row.Cells[i].Style : null;
                 RenderCell (control, column, cell_value, rowIndex, i, cell_rect, cell_style, e);

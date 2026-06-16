@@ -1,16 +1,19 @@
+using System;
+using System.Drawing;
 using Modern.Forms;
 using Modern.Forms.Telerik;
 
 namespace ControlGallery.Panels
 {
     // Showcases RadGridView (Modern.Forms.Telerik) — backed by Modern.Forms.DataGridView — using the
-    // Telerik-style column types, MasterTemplate configuration, and Rows/Cells access.
+    // Telerik-style column types, MasterTemplate configuration, Rows/Cells access, and the
+    // CellFormatting / RowFormatting events (data-driven coloring).
     public class TelerikGridViewPanel : BasePanel
     {
         public TelerikGridViewPanel ()
         {
             Controls.Add (new Label {
-                Text = "RadGridView with Telerik-style GridView* columns and MasterTemplate configuration.",
+                Text = "RadGridView: GridView* columns, MasterTemplate config, and CellFormatting/RowFormatting (rows ≥100k highlighted; salaries <50k shown red).",
                 Left = 10, Top = 10, Width = 760
             });
 
@@ -31,10 +34,26 @@ namespace ControlGallery.Panels
             grid.Columns.Add (new GridViewCheckBoxColumn ("Active") { HeaderText = "Active", Width = 80 });
 
             grid.Rows.Add ("Alice Johnson", "32", "85000.00", "Engineering", "True");
-            grid.Rows.Add ("Bob Smith", "45", "72500.00", "Design", "True");
+            grid.Rows.Add ("Bob Smith", "45", "48000.00", "Design", "True");
             grid.Rows.Add ("Carol Williams", "28", "64000.00", "Support", "False");
-            grid.Rows.Add ("David Brown", "51", "98000.00", "Engineering", "True");
-            grid.Rows.Add ("Eve Davis", "39", "78000.00", "Legal", "True");
+            grid.Rows.Add ("David Brown", "51", "105000.00", "Engineering", "True");
+            grid.Rows.Add ("Eve Davis", "39", "42500.00", "Legal", "True");
+
+            // RowFormatting — highlight rows whose salary is >= 100k.
+            grid.RowFormatting += (o, e) => {
+                if (decimal.TryParse (e.Row?.Cells["Salary"].Value?.ToString (), out var salary) && salary >= 100000) {
+                    e.RowElement.DrawFill = true;
+                    e.RowElement.BackColor = Color.FromArgb (255, 226, 187);
+                }
+            };
+
+            // CellFormatting — show salaries below 50k in red.
+            grid.CellFormatting += (o, e) => {
+                if (e.Column?.Name == "Salary"
+                    && decimal.TryParse (e.CellElement.Value?.ToString (), out var salary)
+                    && salary < 50000)
+                    e.CellElement.ForeColor = Color.FromArgb (200, 0, 0);
+            };
 
             Controls.Add (grid);
 

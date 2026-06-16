@@ -1480,6 +1480,18 @@ namespace Modern.Forms
         protected virtual void OnSelectionChanged (EventArgs e) => SelectionChanged?.Invoke (this, e);
 
         /// <summary>
+        /// Called by the renderer once per row, before its cells are drawn, so subclasses (e.g. the
+        /// Telerik-compat RadGridView) can apply row-level formatting. Default no-op.
+        /// </summary>
+        protected internal virtual void RaiseRowFormatting (DataGridViewRow row, int rowIndex) { }
+
+        /// <summary>
+        /// Called by the renderer for each cell, before it is drawn, so subclasses can apply
+        /// cell-level formatting (e.g. data-driven colors). Default no-op.
+        /// </summary>
+        protected internal virtual void RaiseCellFormatting (DataGridViewRow row, int rowIndex, int columnIndex) { }
+
+        /// <summary>
         /// Raised when the selection changes.
         /// </summary>
         public event EventHandler? SelectionChanged;

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using Modern.Forms;
+using SkiaSharp;
 
 namespace Modern.Forms.Telerik
 {
@@ -19,6 +20,33 @@ namespace Modern.Forms.Telerik
         public RadGridView ()
         {
             MasterTemplate = new GridViewTemplate (this);
+
+            // Forward the real (raised) base events to their Telerik-shaped equivalents so migrated
+            // grid handlers actually run. CellClick also drives CommandCellClick (Telerik's button-
+            // column command pattern dispatches by ColumnInfo.Name), and selection changes drive both
+            // SelectionChanged and CurrentRowChanged.
+            base.CellClick += (_, e) => {
+                var args = BuildCellArgs (e.ColumnIndex, e.RowIndex);
+                _cellClick?.Invoke (this, args);
+                _commandCellClick?.Invoke (this, args);
+            };
+            base.CellValueChanged += (_, e) => {
+                var args = BuildCellArgs (e.ColumnIndex, e.RowIndex);
+                _cellValueChanged?.Invoke (this, args);
+                _valueChanged?.Invoke (this, args);
+            };
+            base.CellEndEdit += (_, e) => _cellEndEdit?.Invoke (this, BuildCellArgs (e.ColumnIndex, e.RowIndex));
+            base.CellBeginEdit += (_, e) => _cellBeginEdit?.Invoke (this, new GridViewCellCancelEventArgs { RowIndex = e.RowIndex, ColumnIndex = e.ColumnIndex, Row = RowAt (e.RowIndex) });
+            base.SelectionChanged += (_, e) => {
+                _selectionChanged?.Invoke (this, e);
+                _currentRowChanged?.Invoke (this, e);
+            };
+            // Base CellDoubleClick is not raised; derive it from the control's double-click + current cell.
+            DoubleClick += (_, _) => {
+                var cell = base.CurrentCell;
+                if (cell is not null)
+                    _cellDoubleClick?.Invoke (this, BuildCellArgs (cell.ColumnIndex, cell.RowIndex));
+            };
         }
 
         /// <summary>Gets the master template (Telerik configuration façade over this grid).</summary>
@@ -47,6 +75,33 @@ namespace Modern.Forms.Telerik
         /// <summary>Gets the number of rows.</summary>
         public int RowCount => base.Rows.Count;
 
+        // ── Telerik config surface (forwarded to MasterTemplate so grid.X and grid.MasterTemplate.X agree) ──
+
+        /// <summary>Gets or sets whether a new-row entry is shown.</summary>
+        public bool AllowAddNewRow { get => MasterTemplate.AllowAddNewRow; set => MasterTemplate.AllowAddNewRow = value; }
+        /// <summary>Gets or sets whether rows can be deleted.</summary>
+        public bool AllowDeleteRow { get => MasterTemplate.AllowDeleteRow; set => MasterTemplate.AllowDeleteRow = value; }
+        /// <summary>Gets or sets whether rows can be edited.</summary>
+        public bool AllowEditRow { get => MasterTemplate.AllowEditRow; set => MasterTemplate.AllowEditRow = value; }
+        /// <summary>Gets or sets whether columns can be reordered.</summary>
+        public bool AllowColumnReorder { get => MasterTemplate.AllowColumnReorder; set => MasterTemplate.AllowColumnReorder = value; }
+        /// <summary>Gets or sets whether the column chooser is allowed.</summary>
+        public bool AllowColumnChooser { get => MasterTemplate.AllowColumnChooser; set => MasterTemplate.AllowColumnChooser = value; }
+        /// <summary>Gets or sets whether multiple rows can be selected.</summary>
+        public bool MultiSelect { get => MasterTemplate.MultiSelect; set => MasterTemplate.MultiSelect = value; }
+        /// <summary>Gets or sets whether filtering is enabled.</summary>
+        public bool EnableFiltering { get => MasterTemplate.EnableFiltering; set => MasterTemplate.EnableFiltering = value; }
+        /// <summary>Gets or sets whether sorting is enabled.</summary>
+        public bool EnableSorting { get => MasterTemplate.EnableSorting; set => MasterTemplate.EnableSorting = value; }
+        /// <summary>Gets or sets whether grouped data auto-expands.</summary>
+        public bool AutoExpandGroups { get => MasterTemplate.AutoExpandGroups; set => MasterTemplate.AutoExpandGroups = value; }
+        /// <summary>Gets or sets whether the group panel is shown. Stub.</summary>
+        public bool ShowGroupPanel { get; set; }
+        /// <summary>Gets or sets whether grouping is enabled. Stub.</summary>
+        public bool EnableGrouping { get; set; }
+        /// <summary>Gets or sets whether alternating rows are colored. Stub.</summary>
+        public bool EnableAlternatingRowColor { get; set; }
+
         /// <summary>Auto-sizes all columns to fit their content. Delegates to the base auto-size pass.</summary>
         public void BestFitColumns () => Invalidate ();
 
@@ -55,18 +110,125 @@ namespace Modern.Forms.Telerik
         /// <summary>Ends a batch update. Stub.</summary>
         public void EndUpdate () => Invalidate ();
 
-        /// <summary>Raised on a command-cell (button column) click. Stub — wire via CellClick.</summary>
-        public event EventHandler<GridViewCellEventArgs>? CommandCellClick { add { } remove { } }
-        /// <summary>Raised when the current row changes. Stub.</summary>
-        public event EventHandler? CurrentRowChanged { add { } remove { } }
-        /// <summary>Raised when a cell value changes (Telerik name). Stub.</summary>
-        public event EventHandler<GridViewCellEventArgs>? ValueChanged { add { } remove { } }
-        /// <summary>Raised when the context menu is opening. Stub.</summary>
+        // ── Events (forwarded from the base grid; see ctor) ──
+
+        private EventHandler<GridViewCellEventArgs>? _cellClick, _commandCellClick, _cellDoubleClick, _cellValueChanged, _valueChanged, _cellEndEdit;
+        private EventHandler<GridViewCellCancelEventArgs>? _cellBeginEdit;
+        private EventHandler? _selectionChanged, _currentRowChanged;
+
+        /// <summary>Raised when a cell is clicked.</summary>
+        public new event EventHandler<GridViewCellEventArgs>? CellClick { add => _cellClick += value; remove => _cellClick -= value; }
+        /// <summary>Raised on a command-cell (button column) click. Fires alongside <see cref="CellClick"/>.</summary>
+        public event EventHandler<GridViewCellEventArgs>? CommandCellClick { add => _commandCellClick += value; remove => _commandCellClick -= value; }
+        /// <summary>Raised when a cell is double-clicked.</summary>
+        public new event EventHandler<GridViewCellEventArgs>? CellDoubleClick { add => _cellDoubleClick += value; remove => _cellDoubleClick -= value; }
+        /// <summary>Raised when a cell value changes.</summary>
+        public new event EventHandler<GridViewCellEventArgs>? CellValueChanged { add => _cellValueChanged += value; remove => _cellValueChanged -= value; }
+        /// <summary>Raised when a cell value changes (Telerik alias).</summary>
+        public event EventHandler<GridViewCellEventArgs>? ValueChanged { add => _valueChanged += value; remove => _valueChanged -= value; }
+        /// <summary>Raised when a cell edit completes.</summary>
+        public new event EventHandler<GridViewCellEventArgs>? CellEndEdit { add => _cellEndEdit += value; remove => _cellEndEdit -= value; }
+        /// <summary>Raised before a cell enters edit mode.</summary>
+        public new event EventHandler<GridViewCellCancelEventArgs>? CellBeginEdit { add => _cellBeginEdit += value; remove => _cellBeginEdit -= value; }
+        /// <summary>Raised when the selection changes.</summary>
+        public new event EventHandler? SelectionChanged { add => _selectionChanged += value; remove => _selectionChanged -= value; }
+        /// <summary>Raised when the current row changes (fires alongside <see cref="SelectionChanged"/>).</summary>
+        public event EventHandler? CurrentRowChanged { add => _currentRowChanged += value; remove => _currentRowChanged -= value; }
+
+        private EventHandler<GridViewCellFormattingEventArgs>? _cellFormatting, _viewCellFormatting;
+        private EventHandler<GridViewRowFormattingEventArgs>? _rowFormatting;
+
+        /// <summary>Raised when a cell is being formatted. Set <c>e.CellElement.BackColor</c>/<c>ForeColor</c> to color the cell.</summary>
+        public new event EventHandler<GridViewCellFormattingEventArgs>? CellFormatting { add => _cellFormatting += value; remove => _cellFormatting -= value; }
+        /// <summary>Raised when a view cell is being formatted (alias for <see cref="CellFormatting"/>).</summary>
+        public event EventHandler<GridViewCellFormattingEventArgs>? ViewCellFormatting { add => _viewCellFormatting += value; remove => _viewCellFormatting -= value; }
+        /// <summary>Raised when a row is being formatted. Set <c>e.RowElement.BackColor</c> (with <c>DrawFill=true</c>) to color the row.</summary>
+        public event EventHandler<GridViewRowFormattingEventArgs>? RowFormatting { add => _rowFormatting += value; remove => _rowFormatting -= value; }
+        /// <summary>Raised when the context menu is opening. Declared for source compatibility; not yet raised.</summary>
         public event EventHandler? ContextMenuOpening { add { } remove { } }
-        /// <summary>Raised when a view cell is being formatted. Stub.</summary>
-        public event EventHandler<GridViewCellFormattingEventArgs>? ViewCellFormatting { add { } remove { } }
-        /// <summary>Raised when a row is being formatted. Stub.</summary>
-        public event EventHandler<GridViewRowFormattingEventArgs>? RowFormatting { add { } remove { } }
+
+        /// <inheritdoc/>
+        protected internal override void RaiseRowFormatting (DataGridViewRow row, int rowIndex)
+        {
+            // Clear the per-cell colors we manage so conditional formatting doesn't leave stale colors
+            // from a previous frame; alternating-row striping (drawn at row level) still shows through.
+            foreach (DataGridViewCell cell in row.Cells) {
+                cell.Style.BackgroundColor = null;
+                cell.Style.ForegroundColor = null;
+            }
+
+            if (_rowFormatting is null)
+                return;
+
+            var element = new GridViewRowElement { RowInfo = new GridViewRowInfo (row) };
+            _rowFormatting.Invoke (this, new GridViewRowFormattingEventArgs { RowElement = element, Row = element.RowInfo });
+
+            if (element.BackColor != Color.Empty) {
+                var sk = ToSK (element.BackColor);
+                foreach (DataGridViewCell cell in row.Cells)
+                    cell.Style.BackgroundColor = sk;
+            }
+
+            if (element.ForeColor != Color.Empty) {
+                var sk = ToSK (element.ForeColor);
+                foreach (DataGridViewCell cell in row.Cells)
+                    cell.Style.ForegroundColor = sk;
+            }
+        }
+
+        /// <inheritdoc/>
+        protected internal override void RaiseCellFormatting (DataGridViewRow row, int rowIndex, int columnIndex)
+        {
+            if ((_cellFormatting is null && _viewCellFormatting is null) || columnIndex < 0 || columnIndex >= row.Cells.Count)
+                return;
+
+            var cell = row.Cells[columnIndex];
+            var element = new GridViewCellElement {
+                Value = cell.Value,
+                Text = cell.Value?.ToString () ?? string.Empty,
+                RowIndex = rowIndex,
+                ColumnInfo = columnIndex < base.Columns.Count ? base.Columns[columnIndex] : null,
+                RowInfo = new GridViewRowInfo (row)
+            };
+
+            var args = new GridViewCellFormattingEventArgs {
+                CellElement = element, RowIndex = rowIndex, ColumnIndex = columnIndex,
+                Value = cell.Value, Row = element.RowInfo, Column = element.ColumnInfo
+            };
+
+            _cellFormatting?.Invoke (this, args);
+            _viewCellFormatting?.Invoke (this, args);
+
+            // Cell formatting overrides any row-level color for this specific cell.
+            if (element.BackColor != Color.Empty)
+                cell.Style.BackgroundColor = ToSK (element.BackColor);
+            if (element.ForeColor != Color.Empty)
+                cell.Style.ForegroundColor = ToSK (element.ForeColor);
+        }
+
+        private static SKColor ToSK (Color c) => new SKColor (c.R, c.G, c.B, c.A);
+
+        // Builds a Telerik cell-event-args from row/column indices, reading the underlying grid.
+        private GridViewCellEventArgs BuildCellArgs (int columnIndex, int rowIndex)
+        {
+            object? value = null;
+            var rowInfo = RowAt (rowIndex);
+
+            if (rowInfo is not null && columnIndex >= 0 && columnIndex < rowInfo.DataRow.Cells.Count)
+                value = rowInfo.DataRow.Cells[columnIndex].Value;
+
+            return new GridViewCellEventArgs {
+                ColumnIndex = columnIndex,
+                RowIndex = rowIndex,
+                Value = value,
+                Row = rowInfo,
+                Column = columnIndex >= 0 && columnIndex < base.Columns.Count ? base.Columns[columnIndex] : null
+            };
+        }
+
+        // Wraps the base row at the given index, or null if out of range.
+        private GridViewRowInfo? RowAt (int rowIndex)
+            => rowIndex >= 0 && rowIndex < base.Rows.Count ? new GridViewRowInfo (base.Rows[rowIndex]) : null;
     }
 
     /// <summary>
