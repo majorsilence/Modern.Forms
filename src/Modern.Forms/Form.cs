@@ -431,7 +431,8 @@ namespace Modern.Forms
 
             dialog_parent = parent;
 
-            ShowDialog (parent);
+            // Call the base window-show-modally helper, NOT this Form.ShowDialog(Form) overload.
+            base.ShowDialog (parent);
 
             return dialog_task.Task;
         }

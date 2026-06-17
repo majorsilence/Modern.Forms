@@ -16,14 +16,20 @@
 
   <ItemGroup>
     <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
+    <!-- Pin HarfBuzz to the SkiaSharp 3.x-aligned versions (overrides RichTextKit's 2.88 transitive). -->
+    <PackageReference Include="SkiaSharp.HarfBuzz" />
+    <PackageReference Include="HarfBuzzSharp" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <PackageReference Include="Topten.RichTextKit" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The Avalonia backend lives in a separate assembly and reaches into the core's
-         internal window/render/input plumbing through the IWindowBackend seam. -->
+    <!-- Backend assemblies live separately and reach into the core's internal window/render/input
+         plumbing (RenderFrame, Handle*, OnBackend*, the Backend field) through the IWindowBackend seam. -->
     <InternalsVisibleTo Include="Modern.Forms.Avalonia" />
+    <InternalsVisibleTo Include="Modern.Forms.Headless" />
   </ItemGroup>
 
 </Project>

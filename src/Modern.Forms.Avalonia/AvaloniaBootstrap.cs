@@ -20,10 +20,14 @@ internal static class AvaloniaBootstrap
             if (_initialized)
                 return;
 
-            AppBuilder.Configure<MinimalApp> ()
-                .UsePlatformDetect ()
-                .UseSkia ()
-                .SetupWithoutStarting ();
+            // Avalonia's AppBuilder.Setup can only run once per process; if the platform has already
+            // been configured (e.g. by a host app or a prior test in the same process), don't re-run it.
+            if (Avalonia.Application.Current is null) {
+                AppBuilder.Configure<MinimalApp> ()
+                    .UsePlatformDetect ()
+                    .UseSkia ()
+                    .SetupWithoutStarting ();
+            }
 
             _initialized = true;
         }
