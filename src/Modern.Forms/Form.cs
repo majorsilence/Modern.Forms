@@ -1,8 +1,4 @@
 using System.ComponentModel;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Threading;
 using SkiaSharp;
 
 namespace Modern.Forms
@@ -10,12 +6,12 @@ namespace Modern.Forms
     /// <summary>
     /// Represents a top-level window to display to the user.
     /// </summary>
-    public class Form : WindowBase, ICloseable, IWin32Window
+    public class Form : WindowBase, IWin32Window
     {
         // If the border is only 1 pixel it's too hard to resize, so we may steal some pixels from the client area
         private const int MINIMUM_RESIZE_PIXELS = 4;
 
-        private Avalonia.Controls.Window? dialog_parent;
+        private WindowBase? dialog_parent;
         private DialogResult dialog_result = DialogResult.None;
         internal TaskCompletionSource<DialogResult>? dialog_task;
         private System.Drawing.Size minimum_size;
@@ -30,27 +26,20 @@ namespace Modern.Forms
         /// </summary>
         public Form ()
         {
-            var host = new ModernFormsWindowHost (this);
-            InitWindow (host);
+            InitWindow (Modern.Forms.Backends.Platform.Backend.CreateWindow (this, isPopup: false));
 
             TitleBar = Controls.AddImplicitControl (new FormTitleBar ());
 
             Resizeable = true;
-            host.WindowDecorations = WindowDecorations.None;
-            host.ExtendClientAreaToDecorationsHint = true;
+            Backend.SetSystemDecorations (false);
 
-            host.Closing += (s, e) => {
-                var args = new CancelEventArgs ();
-                OnClosing (args);
-                e.Cancel = args.Cancel;
-            };
+            // The native-close (Closing) hook is delivered via WindowBase.OnBackendClosing → OnClosing.
 
             // On macOS defer to the native window chrome (traffic-light buttons, native drag/resize).
             if (OperatingSystem.IsMacOS ())
                 UseSystemDecorations = true;
 
-            host.Width = DefaultSize.Width;
-            host.Height = DefaultSize.Height;
+            Backend.Size = DefaultSize;
         }
 
         /// <summary>Gets or sets the button that is activated when Enter is pressed.</summary>
@@ -75,7 +64,7 @@ namespace Modern.Forms
         public bool KeyPreview { get; set; }
 
         /// <summary>Begins dragging the window to move it.</summary>
-        public void BeginMoveDrag () => AvWindow.StartMoveDrag ();
+        public void BeginMoveDrag () => Backend.BeginMoveDrag ();
 
         /// <summary>Gets or sets the bounds of the Window.</summary>
         public new System.Drawing.Rectangle Bounds {
@@ -96,8 +85,8 @@ namespace Modern.Forms
                 return;
 
             if (dialog_parent is not null) {
-                dialog_parent.IsEnabled = true;
-                dialog_parent.Activate ();
+                dialog_parent.Backend.Enabled = true;
+                dialog_parent.Backend.Activate ();
                 dialog_parent = null;
             }
 
@@ -127,13 +116,13 @@ namespace Modern.Forms
         /// <summary>Raised when the user finishes resizing the form. Stub in Modern.Forms.</summary>
         public event EventHandler? ResizeEnd { add { } remove { } }
 
-        /// <summary>Raised when the form is activated. Wired to the underlying Avalonia Activated event.</summary>
+        /// <summary>Raised when the form is activated by the backend.</summary>
         public new event EventHandler? Activated {
             add => base.Activated += value;
             remove => base.Activated -= value;
         }
 
-        /// <summary>Raised when the form is deactivated. Wired to the underlying Avalonia Deactivated event.</summary>
+        /// <summary>Raised when the form is deactivated by the backend.</summary>
         public event EventHandler? Deactivate {
             add => base.Deactivated += value;
             remove => base.Deactivated -= value;
@@ -215,14 +204,13 @@ namespace Modern.Forms
                 TitleBar.Image = value;
 
                 if (value is null) {
-                    AvWindow.Icon = null;
+                    Backend.SetIcon (null);
                 } else {
                     using var sk = value.ToSKBitmap ();
                     if (sk is not null) {
                         using var ms = new System.IO.MemoryStream ();
                         sk.Encode (ms, SKEncodedImageFormat.Png, 100);
-                        ms.Seek (0, System.IO.SeekOrigin.Begin);
-                        AvWindow.Icon = new Avalonia.Controls.WindowIcon (ms);
+                        Backend.SetIcon (ms.ToArray ());
                     }
                 }
             }
@@ -231,10 +219,10 @@ namespace Modern.Forms
 
         /// <summary>Gets or sets the unscaled location of the control.</summary>
         public new System.Drawing.Point Location {
-            get => new System.Drawing.Point (AvWindow.Position.X, AvWindow.Position.Y);
+            get => Backend.Location;
             set {
-                if (new System.Drawing.Point (AvWindow.Position.X, AvWindow.Position.Y) != value)
-                    AvWindow.Position = new PixelPoint (value.X, value.Y);
+                if (Backend.Location != value)
+                    Backend.Location = value;
             }
         }
 
@@ -261,14 +249,14 @@ namespace Modern.Forms
             var element = GetElementAtLocation (x, y);
 
             switch (element) {
-                case WindowElement.TopBorder:       AvWindow.StartResizeDrag (WindowEdge.North);     return true;
-                case WindowElement.RightBorder:     AvWindow.StartResizeDrag (WindowEdge.East);      return true;
-                case WindowElement.BottomBorder:    AvWindow.StartResizeDrag (WindowEdge.South);     return true;
-                case WindowElement.LeftBorder:      AvWindow.StartResizeDrag (WindowEdge.West);      return true;
-                case WindowElement.TopLeftCorner:   AvWindow.StartResizeDrag (WindowEdge.NorthWest); return true;
-                case WindowElement.TopRightCorner:  AvWindow.StartResizeDrag (WindowEdge.NorthEast); return true;
-                case WindowElement.BottomLeftCorner:  AvWindow.StartResizeDrag (WindowEdge.SouthWest); return true;
-                case WindowElement.BottomRightCorner: AvWindow.StartResizeDrag (WindowEdge.SouthEast); return true;
+                case WindowElement.TopBorder:         Backend.BeginResizeDrag (Backends.WindowEdge.North);     return true;
+                case WindowElement.RightBorder:       Backend.BeginResizeDrag (Backends.WindowEdge.East);      return true;
+                case WindowElement.BottomBorder:      Backend.BeginResizeDrag (Backends.WindowEdge.South);     return true;
+                case WindowElement.LeftBorder:        Backend.BeginResizeDrag (Backends.WindowEdge.West);      return true;
+                case WindowElement.TopLeftCorner:     Backend.BeginResizeDrag (Backends.WindowEdge.NorthWest); return true;
+                case WindowElement.TopRightCorner:    Backend.BeginResizeDrag (Backends.WindowEdge.NorthEast); return true;
+                case WindowElement.BottomLeftCorner:  Backend.BeginResizeDrag (Backends.WindowEdge.SouthWest); return true;
+                case WindowElement.BottomRightCorner: Backend.BeginResizeDrag (Backends.WindowEdge.SouthEast); return true;
             }
 
             return false;
@@ -279,14 +267,14 @@ namespace Modern.Forms
             var element = GetElementAtLocation (x, y);
 
             switch (element) {
-                case WindowElement.TopBorder:         AvWindow.Cursor = Cursors.TopSide.cursor;         return true;
-                case WindowElement.RightBorder:       AvWindow.Cursor = Cursors.RightSide.cursor;       return true;
-                case WindowElement.BottomBorder:      AvWindow.Cursor = Cursors.BottomSide.cursor;      return true;
-                case WindowElement.LeftBorder:        AvWindow.Cursor = Cursors.LeftSide.cursor;        return true;
-                case WindowElement.TopLeftCorner:     AvWindow.Cursor = Cursors.TopLeftCorner.cursor;   return true;
-                case WindowElement.TopRightCorner:    AvWindow.Cursor = Cursors.TopRightCorner.cursor;  return true;
-                case WindowElement.BottomLeftCorner:  AvWindow.Cursor = Cursors.BottomLeftCorner.cursor; return true;
-                case WindowElement.BottomRightCorner: AvWindow.Cursor = Cursors.BottomRightCorner.cursor; return true;
+                case WindowElement.TopBorder:         Backend.SetCursor (Cursors.TopSide.CursorType);         return true;
+                case WindowElement.RightBorder:       Backend.SetCursor (Cursors.RightSide.CursorType);       return true;
+                case WindowElement.BottomBorder:      Backend.SetCursor (Cursors.BottomSide.CursorType);      return true;
+                case WindowElement.LeftBorder:        Backend.SetCursor (Cursors.LeftSide.CursorType);        return true;
+                case WindowElement.TopLeftCorner:     Backend.SetCursor (Cursors.TopLeftCorner.CursorType);   return true;
+                case WindowElement.TopRightCorner:    Backend.SetCursor (Cursors.TopRightCorner.CursorType);  return true;
+                case WindowElement.BottomLeftCorner:  Backend.SetCursor (Cursors.BottomLeftCorner.CursorType); return true;
+                case WindowElement.BottomRightCorner: Backend.SetCursor (Cursors.BottomRightCorner.CursorType); return true;
             }
 
             return base.HandleMouseMove (x, y);
@@ -336,10 +324,8 @@ namespace Modern.Forms
 
         private void ApplyMinMaxSize ()
         {
-            AvWindow.MinWidth  = minimum_size.IsEmpty ? 0 : minimum_size.Width;
-            AvWindow.MinHeight = minimum_size.IsEmpty ? 0 : minimum_size.Height;
-            AvWindow.MaxWidth  = maximum_size.IsEmpty ? double.PositiveInfinity : maximum_size.Width;
-            AvWindow.MaxHeight = maximum_size.IsEmpty ? double.PositiveInfinity : maximum_size.Height;
+            Backend.MinimumSize = minimum_size;
+            Backend.MaximumSize = maximum_size;
         }
 
         /// <summary>Gets or sets the name of the form.</summary>
@@ -381,13 +367,11 @@ namespace Modern.Forms
         /// <summary>Implements IWin32Window: returns IntPtr.Zero (Modern.Forms has no Win32 handle).</summary>
         IntPtr IWin32Window.Handle => IntPtr.Zero;
 
-        // Blocks the current call while running a nested Avalonia dispatcher frame so the
-        // modal dialog can receive and handle input events without deadlocking the UI thread.
+        // Blocks the current call while the backend runs a nested message loop so the modal
+        // dialog can receive and handle input events without deadlocking the UI thread.
         internal static T RunModal<T> (Task<T> modalTask)
         {
-            var frame = new DispatcherFrame ();
-            modalTask.ContinueWith (_ => frame.Continue = false, TaskScheduler.Default);
-            Dispatcher.UIThread.PushFrame (frame);
+            Backends.Platform.Backend.RunModalLoop (modalTask);
             return modalTask.GetAwaiter ().GetResult ();
         }
 
@@ -398,23 +382,23 @@ namespace Modern.Forms
                 control.OnThemeChanged (e);
         }
 
-        internal override void SetWindowStartupLocation (Avalonia.Controls.Window? owner = null)
+        internal override void SetWindowStartupLocation (WindowBase? owner = null)
         {
             var scaling = Scaling;
 
-            var rect = new PixelRect (
-                PixelPoint.Origin,
-                PixelSize.FromSize (AvWindow.ClientSize, scaling));
+            // Window size in device pixels (screen geometry is reported in device pixels).
+            var width = (int) (Backend.ClientSize.Width * scaling);
+            var height = (int) (Backend.ClientSize.Height * scaling);
 
             if (StartPosition == FormStartPosition.CenterScreen) {
-                var ownerPos = owner is not null ? owner.Position : AvWindow.Position;
-                var screen = Screens.ScreenFromPoint (ownerPos);
+                var ownerPos = owner is not null ? owner.Backend.Location : Backend.Location;
+                var screen = Screen.FromPoint (ownerPos);
 
                 if (screen != null) {
                     var wa = screen.WorkingArea;
                     var position = new System.Drawing.Point (
-                        wa.X + (wa.Width - rect.Width) / 2,
-                        wa.Y + (wa.Height - rect.Height) / 2);
+                        wa.X + (wa.Width - width) / 2,
+                        wa.Y + (wa.Height - height) / 2);
 
                     // Ensure we don't position the titlebar offscreen
                     position.X = Math.Max (position.X, wa.X);
@@ -424,12 +408,12 @@ namespace Modern.Forms
                 }
             } else if (StartPosition == FormStartPosition.CenterParent) {
                 if (owner != null) {
-                    var ownerRect = new PixelRect (
-                        owner.Position,
-                        PixelSize.FromSize (owner.ClientSize, scaling));
+                    var ownerPos = owner.Backend.Location;
+                    var ownerWidth = (int) (owner.Backend.ClientSize.Width * scaling);
+                    var ownerHeight = (int) (owner.Backend.ClientSize.Height * scaling);
 
-                    var x = ownerRect.X + (ownerRect.Width - rect.Width) / 2;
-                    var y = ownerRect.Y + (ownerRect.Height - rect.Height) / 2;
+                    var x = ownerPos.X + (ownerWidth - width) / 2;
+                    var y = ownerPos.Y + (ownerHeight - height) / 2;
                     Location = new System.Drawing.Point (x, y);
                 }
             }
@@ -445,9 +429,9 @@ namespace Modern.Forms
                 return dialog_task.Task;
             }
 
-            dialog_parent = parent.AvWindow;
+            dialog_parent = parent;
 
-            ShowDialog (parent.AvWindow);
+            ShowDialog (parent);
 
             return dialog_task.Task;
         }
@@ -465,11 +449,8 @@ namespace Modern.Forms
 
         /// <summary>Gets or sets the unscaled size of the window.</summary>
         public new System.Drawing.Size Size {
-            get => new System.Drawing.Size ((int)AvWindow.ClientSize.Width, (int)AvWindow.ClientSize.Height);
-            set {
-                AvWindow.Width = value.Width;
-                AvWindow.Height = value.Height;
-            }
+            get => Backend.ClientSize;
+            set => Backend.Size = value;
         }
 
         /// <summary>Gets the currently active form (the most recently focused open form).</summary>
@@ -501,8 +482,8 @@ namespace Modern.Forms
 
         /// <summary>Gets or sets whether a maximize button appears in the title bar.</summary>
         public bool MaximizeBox {
-            get => AvWindow.CanResize;
-            set => AvWindow.CanResize = value;
+            get => Backend.CanResize;
+            set => Backend.CanResize = value;
         }
 
         /// <summary>Gets or sets whether a minimize button appears in the title bar.</summary>
@@ -510,14 +491,14 @@ namespace Modern.Forms
 
         /// <summary>Gets or sets whether the form is displayed in the taskbar.</summary>
         public bool ShowInTaskbar {
-            get => AvWindow.ShowInTaskbar;
-            set => AvWindow.ShowInTaskbar = value;
+            get => Backend.ShowInTaskbar;
+            set => Backend.ShowInTaskbar = value;
         }
 
         /// <summary>Gets or sets whether the form is displayed on top of all other windows.</summary>
         public bool TopMost {
-            get => AvWindow.Topmost;
-            set => AvWindow.Topmost = value;
+            get => Backend.Topmost;
+            set => Backend.Topmost = value;
         }
 
         /// <summary>Gets or sets the size-grip style for the form (stub).</summary>
@@ -525,8 +506,8 @@ namespace Modern.Forms
 
         /// <summary>Gets or sets the form opacity (0.0 = transparent, 1.0 = opaque).</summary>
         public double Opacity {
-            get => AvWindow.Opacity;
-            set => AvWindow.Opacity = value;
+            get => Backend.Opacity;
+            set => Backend.Opacity = value;
         }
 
         /// <summary>Gets or sets the color treated as transparent. Stub in Modern.Forms.</summary>
@@ -541,7 +522,7 @@ namespace Modern.Forms
             set {
                 if (text != value) {
                     text = value;
-                    AvWindow.Title = text;
+                    Backend.Title = text;
                     TitleBar.Text = text;
                 }
             }
@@ -564,16 +545,15 @@ namespace Modern.Forms
                     use_system_decorations = value;
                     TitleBar.Visible = !use_system_decorations;
                     Style.Border.Width = use_system_decorations ? 0 : 1;
-                    AvWindow.WindowDecorations = value ? WindowDecorations.Full : WindowDecorations.None;
-                    AvWindow.ExtendClientAreaToDecorationsHint = !value;
+                    Backend.SetSystemDecorations (value);
                 }
             }
         }
 
         /// <summary>Gets or sets the state of the form (normal/minimized/maximized).</summary>
         public FormWindowState WindowState {
-            get => (FormWindowState)(int)AvWindow.WindowState;
-            set => AvWindow.WindowState = (Avalonia.Controls.WindowState)(int)value;
+            get => Backend.WindowState;
+            set => Backend.WindowState = value;
         }
 
         /// <summary>Gets or sets the active control on the form.</summary>
@@ -672,7 +652,7 @@ namespace Modern.Forms
         }
 
         /// <summary>Brings the form to the front of the z-order.</summary>
-        public void BringToFront () => AvWindow?.Activate ();
+        public void BringToFront () => Backend.Activate ();
 
         /// <summary>Gets the bounds of the form when it is not minimized or maximized.</summary>
         public System.Drawing.Rectangle RestoreBounds => Bounds;

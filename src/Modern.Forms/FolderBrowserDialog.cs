@@ -1,4 +1,4 @@
-using Avalonia.Platform.Storage;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -35,24 +35,12 @@ namespace Modern.Forms
         /// </summary>
         public async Task<DialogResult> ShowDialog (Form owner)
         {
-            var parent = owner.AvWindow.StorageProvider;
-
-            IStorageFolder? startLocation = null;
-            var initPath = GetInitialDirectory ();
-            if (initPath is not null)
-                startLocation = await parent.TryGetFolderFromPathAsync (new Uri (initPath));
-
-            var options = new FolderPickerOpenOptions {
-                AllowMultiple = false,
-                SuggestedStartLocation = startLocation,
+            var request = new FolderDialogRequest {
+                InitialDirectory = GetInitialDirectory (),
                 Title = Title
             };
 
-            var result = await parent.OpenFolderPickerAsync (options);
-
-            var paths = result.Select (f => f.GetFullPath ()).WhereNotNull ();
-
-            SelectedPath = paths?.FirstOrDefault ();
+            SelectedPath = await owner.Backend.ShowOpenFolderDialog (request);
 
             return SelectedPath is null ? DialogResult.Cancel : DialogResult.OK;
         }

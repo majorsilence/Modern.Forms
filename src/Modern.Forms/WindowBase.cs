@@ -1,8 +1,4 @@
 using System.ComponentModel;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Threading;
 
 namespace Modern.Forms
 {
@@ -14,12 +10,10 @@ namespace Modern.Forms
         private const int DOUBLE_CLICK_TIME = 500;
         private const int DOUBLE_CLICK_MOVEMENT = 4;
 
-        internal ModernFormsWindowHost AvWindow = null!;
+        // The window's platform backend (the Avalonia host today; a Uno host in future). WindowBase
+        // performs all of its window operations through this seam so it stays fully backend-neutral.
+        internal Modern.Forms.Backends.IWindowBackend Backend = null!;
         internal ControlAdapter adapter = null!;
-
-        // The window's platform backend (the host implements IWindowBackend). WindowBase performs its
-        // window operations through this seam so it stays backend-neutral.
-        internal Modern.Forms.Backends.IWindowBackend Backend => AvWindow;
 
         private DateTime last_click_time;
         private System.Drawing.Point last_click_point;
@@ -27,7 +21,7 @@ namespace Modern.Forms
         internal bool shown;
 
         /// <summary>
-        /// Initializes the Avalonia platform. Subclasses must call <see cref="InitWindow"/> before
+        /// Initializes the platform backend. Subclasses must call <see cref="InitWindow"/> before
         /// accessing any window or adapter members.
         /// </summary>
         protected WindowBase ()
@@ -39,17 +33,36 @@ namespace Modern.Forms
         /// Completes window initialisation. Must be called in subclass constructors before accessing
         /// Controls, adapter, or any window property.
         /// </summary>
-        internal void InitWindow (ModernFormsWindowHost avWindow)
+        internal void InitWindow (Modern.Forms.Backends.IWindowBackend backend)
         {
-            AvWindow = avWindow;
+            Backend = backend;
             adapter = new ControlAdapter (this);
+        }
 
-            AvWindow.Closed += (s, e) => Closed?.Invoke (this, EventArgs.Empty);
-            AvWindow.Activated += (s, e) => Activated?.Invoke (this, EventArgs.Empty);
-            AvWindow.Deactivated += (s, e) => {
-                Application.ClosePopups ();
-                Deactivated?.Invoke (this, EventArgs.Empty);
-            };
+        // ── Lifecycle callbacks (the platform backend invokes these; no platform types involved) ──
+        /// <summary>Called by the backend after the window is closed.</summary>
+        internal void OnBackendClosed () => Closed?.Invoke (this, EventArgs.Empty);
+
+        /// <summary>Called by the backend when the window is about to close. Returns true to cancel.</summary>
+        internal bool OnBackendClosing ()
+        {
+            if (this is Form f) {
+                var args = new System.ComponentModel.CancelEventArgs ();
+                f.OnClosing (args);
+                return args.Cancel;
+            }
+
+            return false;
+        }
+
+        /// <summary>Called by the backend when the window is activated.</summary>
+        internal void OnBackendActivated () => Activated?.Invoke (this, EventArgs.Empty);
+
+        /// <summary>Called by the backend when the window is deactivated.</summary>
+        internal void OnBackendDeactivated ()
+        {
+            Application.ClosePopups ();
+            Deactivated?.Invoke (this, EventArgs.Empty);
         }
 
         /// <summary>Gets the bounds of the Window.</summary>
@@ -84,7 +97,7 @@ namespace Modern.Forms
                 Application.OpenForms.Remove (f);
             }
 
-            AvWindow.Close ();
+            Backend.Close ();
         }
 
         /// <summary>Raised when the window is closed.</summary>
@@ -167,7 +180,7 @@ namespace Modern.Forms
 
         internal virtual bool HandleMouseMove (int x, int y)
         {
-            AvWindow.Cursor = current_cursor?.cursor ?? Cursors.Arrow.cursor;
+            Backend.SetCursor (current_cursor?.CursorType ?? Backends.CursorType.Arrow);
             return false;
         }
 
@@ -175,7 +188,7 @@ namespace Modern.Forms
         public void Hide ()
         {
             Visible = false;
-            AvWindow.Hide ();
+            Backend.Hide ();
 
             if (Application.ActivePopupWindow == this)
                 Application.ActivePopupWindow = null;
@@ -391,11 +404,9 @@ namespace Modern.Forms
         /// <summary>Gets the current scale factor of the desktop.</summary>
         public double DesktopScaling => Backend.Scaling;
 
-        internal Avalonia.Controls.Screens Screens => AvWindow.Screens;
-
         internal void SetCursor (Cursor cursor) => current_cursor = cursor;
 
-        internal virtual void SetWindowStartupLocation (Avalonia.Controls.Window? owner = null) { }
+        internal virtual void SetWindowStartupLocation (WindowBase? owner = null) { }
 
         /// <summary>Displays the window to the user.</summary>
         public void Show ()
@@ -404,7 +415,7 @@ namespace Modern.Forms
             OnVisibleChanged (EventArgs.Empty);
 
             SetWindowStartupLocation ();
-            AvWindow.Show ();
+            Backend.Show ();
 
             if (this is Form f)
                 Application.OpenForms.Add (f);
@@ -415,14 +426,14 @@ namespace Modern.Forms
             }
         }
 
-        internal void ShowDialog (Avalonia.Controls.Window parentAvWindow)
+        internal void ShowDialog (WindowBase parent)
         {
             Visible = true;
             OnVisibleChanged (EventArgs.Empty);
 
-            SetWindowStartupLocation (parentAvWindow);
-            parentAvWindow.IsEnabled = false;
-            AvWindow.Show ();
+            SetWindowStartupLocation (parent);
+            parent.Backend.Enabled = false;
+            Backend.Show ();
 
             if (this is Form f)
                 Application.OpenForms.Add (f);

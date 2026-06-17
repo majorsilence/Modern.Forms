@@ -1,6 +1,6 @@
 using System;
 using System.Drawing;
-using Avalonia.Threading;
+using Modern.Forms.Backends;
 using SkiaSharp;
 
 namespace Modern.Forms
@@ -162,7 +162,7 @@ namespace Modern.Forms
         public void BeginInvoke (Action action)
         {
             ArgumentNullException.ThrowIfNull (action);
-            Dispatcher.UIThread.Post (action);
+            Platform.Backend.Post (action);
         }
 
         /// <summary>
@@ -173,7 +173,7 @@ namespace Modern.Forms
         {
             if (method is Action a) BeginInvoke (a);
             else if (method is MethodInvoker mi) BeginInvoke ((Action)(() => mi ()));
-            else Dispatcher.UIThread.Post (() => method.DynamicInvoke ());
+            else Platform.Backend.Post (() => method.DynamicInvoke ());
             return new System.Threading.Tasks.Task (() => { });
         }
 
@@ -182,7 +182,7 @@ namespace Modern.Forms
         /// </summary>
         public IAsyncResult BeginInvoke (Delegate method, params object?[] args)
         {
-            Dispatcher.UIThread.Post (() => method.DynamicInvoke (args));
+            Platform.Backend.Post (() => method.DynamicInvoke (args));
             return new System.Threading.Tasks.Task (() => { });
         }
 
@@ -195,13 +195,7 @@ namespace Modern.Forms
         public void Invoke (Action action)
         {
             ArgumentNullException.ThrowIfNull (action);
-
-            if (Dispatcher.UIThread.CheckAccess ()) {
-                action ();
-                return;
-            }
-
-            Dispatcher.UIThread.InvokeAsync (action).GetAwaiter ().GetResult ();
+            Platform.Backend.Invoke (action);
         }
 
         /// <summary>
@@ -217,9 +211,7 @@ namespace Modern.Forms
         {
             if (method is Action a) { Invoke (a); return null; }
             if (method is MethodInvoker mi) { Invoke (mi); return null; }
-            if (Dispatcher.UIThread.CheckAccess ())
-                return method.DynamicInvoke ();
-            return Dispatcher.UIThread.InvokeAsync (() => method.DynamicInvoke ()).GetAwaiter ().GetResult ();
+            return Platform.Backend.Invoke (() => method.DynamicInvoke ());
         }
 
         /// <summary>
@@ -227,9 +219,7 @@ namespace Modern.Forms
         /// </summary>
         public object? Invoke (Delegate method, params object?[] args)
         {
-            if (Dispatcher.UIThread.CheckAccess ())
-                return method.DynamicInvoke (args);
-            return Dispatcher.UIThread.InvokeAsync (() => method.DynamicInvoke (args)).GetAwaiter ().GetResult ();
+            return Platform.Backend.Invoke (() => method.DynamicInvoke (args));
         }
 
         /// <summary>
@@ -238,11 +228,7 @@ namespace Modern.Forms
         public T Invoke<T> (Func<T> func)
         {
             ArgumentNullException.ThrowIfNull (func);
-
-            if (Dispatcher.UIThread.CheckAccess ())
-                return func ();
-
-            return Dispatcher.UIThread.InvokeAsync (func).GetAwaiter ().GetResult ();
+            return Platform.Backend.Invoke (func);
         }
 
         /// <summary>Gets or sets whether a wait cursor is shown for this control and its children.</summary>
@@ -270,7 +256,7 @@ namespace Modern.Forms
         public bool CanFocus => Visible && Enabled && CanSelect;
 
         /// <summary>Gets whether the caller must use Invoke to call the control (always false on UI thread).</summary>
-        public bool InvokeRequired => !Dispatcher.UIThread.CheckAccess ();
+        public bool InvokeRequired => !Platform.Backend.CheckAccess ();
 
         /// <summary>Gets or sets the right-to-left layout mode. Stub in Modern.Forms.</summary>
         public RightToLeft RightToLeft { get; set; } = RightToLeft.No;

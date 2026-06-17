@@ -1,5 +1,3 @@
-using Avalonia;
-
 namespace Modern.Forms
 {
     /// <summary>
@@ -14,7 +12,7 @@ namespace Modern.Forms
         /// </summary>
         public PopupWindow (Form parentForm)
         {
-            InitWindow (new ModernFormsPopupWindowHost (this));
+            InitWindow (Modern.Forms.Backends.Platform.Backend.CreateWindow (this, isPopup: true));
 
             StartPosition = FormStartPosition.Manual;
 
@@ -34,9 +32,8 @@ namespace Modern.Forms
         /// <summary>Show the PopupWindow at the specified screen coordinates.</summary>
         public void Show (int x, int y)
         {
-            AvWindow.Position = new PixelPoint (x, y);
-            AvWindow.Width = Size.Width;
-            AvWindow.Height = Size.Height;
+            Backend.Location = new System.Drawing.Point (x, y);
+            Backend.Size = Size;
 
             Application.ActivePopupWindow = this;
 

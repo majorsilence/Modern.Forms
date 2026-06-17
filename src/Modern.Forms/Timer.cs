@@ -1,5 +1,5 @@
 using System.ComponentModel;
-using Avalonia.Threading;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -10,7 +10,7 @@ namespace Modern.Forms
     /// </summary>
     public class Timer : Component
     {
-        private DispatcherTimer? dispatcherTimer;
+        private IPlatformTimer? platformTimer;
         private int interval = 100;
         private bool enabled;
         private EventHandler? onTimer;
@@ -71,8 +71,8 @@ namespace Modern.Forms
 
                 interval = value;
 
-                if (dispatcherTimer is not null)
-                    dispatcherTimer.Interval = TimeSpan.FromMilliseconds (interval);
+                if (platformTimer is not null)
+                    platformTimer.IntervalMilliseconds = interval;
             }
         }
 
@@ -96,23 +96,18 @@ namespace Modern.Forms
 
         private void StartTimer ()
         {
-            if (dispatcherTimer is null) {
-                dispatcherTimer = new DispatcherTimer ();
-                dispatcherTimer.Tick += DispatcherTimer_Tick;
+            if (platformTimer is null) {
+                platformTimer = Platform.Backend.CreateTimer ();
+                platformTimer.Tick += () => OnTick (EventArgs.Empty);
             }
 
-            dispatcherTimer.Interval = TimeSpan.FromMilliseconds (interval);
-            dispatcherTimer.Start ();
+            platformTimer.IntervalMilliseconds = interval;
+            platformTimer.Start ();
         }
 
         private void StopTimer ()
         {
-            dispatcherTimer?.Stop ();
-        }
-
-        private void DispatcherTimer_Tick (object? sender, EventArgs e)
-        {
-            OnTick (EventArgs.Empty);
+            platformTimer?.Stop ();
         }
 
         /// <inheritdoc/>
@@ -122,11 +117,8 @@ namespace Modern.Forms
                 enabled = false;
                 StopTimer ();
 
-                if (dispatcherTimer is not null) {
-                    dispatcherTimer.Tick -= DispatcherTimer_Tick;
-                    dispatcherTimer = null;
-                }
-
+                platformTimer?.Dispose ();
+                platformTimer = null;
                 onTimer = null;
             }
 

@@ -1,4 +1,4 @@
-using Avalonia.Input;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -7,20 +7,18 @@ namespace Modern.Forms
     /// </summary>
     public class Cursor : IDisposable
     {
-        internal Avalonia.Input.Cursor cursor;
-        private bool _disposed;
+        internal readonly CursorType CursorType;
 
-        internal Cursor (StandardCursorType type)
+        internal Cursor (CursorType type)
         {
-            cursor = new Avalonia.Input.Cursor (type);
+            CursorType = type;
         }
 
         /// <inheritdoc/>
         public void Dispose ()
         {
-            if (_disposed) return;
-            _disposed = true;
-            cursor.Dispose ();
+            // Cursors are backend-neutral value descriptors in core; the native cursor (if any)
+            // is owned and cached by the backend, so there is nothing to release here.
             GC.SuppressFinalize (this);
         }
 

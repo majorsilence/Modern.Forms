@@ -1,5 +1,3 @@
-using Avalonia.Input;
-
 namespace Modern.Forms
 {
     /// <summary>
@@ -62,15 +60,5 @@ namespace Modern.Forms
             }
         }
 
-        internal static Keys FromInputModifiers (KeyModifiers modifiers)
-        {
-            var keys = Keys.None;
-
-            if ((modifiers & KeyModifiers.Alt) != 0)     keys |= Keys.Alt;
-            if ((modifiers & KeyModifiers.Control) != 0) keys |= Keys.Control;
-            if ((modifiers & KeyModifiers.Shift) != 0)   keys |= Keys.Shift;
-
-            return keys;
-        }
     }
 }

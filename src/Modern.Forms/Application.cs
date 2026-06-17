@@ -1,6 +1,4 @@
 using System.Reflection;
-using Avalonia.Input;
-using Avalonia.Threading;
 using Modern.Forms.Backends;
 
 namespace Modern.Forms
@@ -57,7 +55,7 @@ namespace Modern.Forms
         public static void SetCompatibleTextRenderingDefault (bool defaultValue) { }
 
         /// <summary>
-        /// Sets the high DPI mode for the application. No-op in Modern.Forms (Avalonia handles DPI automatically).
+        /// Sets the high DPI mode for the application. No-op in Modern.Forms (the platform backend handles DPI automatically).
         /// </summary>
         public static bool SetHighDpiMode (HighDpiMode highDpiMode) => true;
 
@@ -110,7 +108,7 @@ namespace Modern.Forms
             Platform.Backend.Initialize ();
 
             mainForm.Show ();
-            Run ((ICloseable)mainForm);
+            Run ((WindowBase)mainForm);
         }
 
         /// <summary>Begins running a standard application message loop on the current thread using an ApplicationContext.</summary>
@@ -119,14 +117,14 @@ namespace Modern.Forms
             if (context.MainForm != null)
                 Run (context.MainForm);
             else
-                Run ((ICloseable)(context.MainForm ?? new Form ()));
+                Run ((WindowBase)(context.MainForm ?? new Form ()));
         }
 
         /// <summary>
-        /// Runs the application's main loop until the <see cref="ICloseable"/> is closed.
+        /// Runs the application's main loop until the given window is closed.
         /// </summary>
-        /// <param name="closable">The closable to track.</param>
-        public static void Run (ICloseable closable)
+        /// <param name="closable">The window to track.</param>
+        public static void Run (WindowBase closable)
         {
             if (_mainLoopCancellationTokenSource != null)
                 throw new InvalidOperationException ("Run should only be called once");

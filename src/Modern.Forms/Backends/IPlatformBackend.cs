@@ -31,6 +31,9 @@ namespace Modern.Forms.Backends
         /// <summary>Runs an action synchronously on the UI thread (marshalling if needed).</summary>
         void Invoke (Action action);
 
+        /// <summary>Runs a function synchronously on the UI thread (marshalling if needed) and returns its result.</summary>
+        T Invoke<T> (Func<T> func);
+
         /// <summary>Returns whether the calling thread is the UI thread.</summary>
         bool CheckAccess ();
 
@@ -43,5 +46,25 @@ namespace Modern.Forms.Backends
         /// top-level window.
         /// </summary>
         IWindowBackend CreateWindow (WindowBase owner, bool isPopup);
+
+        /// <summary>Creates a UI-thread timer (used by <see cref="Modern.Forms.Timer"/>).</summary>
+        IPlatformTimer CreateTimer ();
+
+        // ── Clipboard (synchronous; the backend marshals to the UI thread as needed) ──
+        /// <summary>Gets the clipboard text, or an empty string.</summary>
+        string GetClipboardText ();
+        /// <summary>Sets the clipboard text.</summary>
+        void SetClipboardText (string text);
+        /// <summary>Clears the clipboard.</summary>
+        void ClearClipboard ();
+
+        /// <summary>Enumerates the connected display devices. Returns an empty array if unknown.</summary>
+        ScreenInfo[] GetScreens ();
+
+        /// <summary>
+        /// Runs a nested message loop (blocking the caller) until <paramref name="completed"/> finishes,
+        /// so a modal dialog can pump input without returning to the outer loop.
+        /// </summary>
+        void RunModalLoop (System.Threading.Tasks.Task completed);
     }
 }

@@ -1,4 +1,4 @@
-using Avalonia.Platform.Storage;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -29,27 +29,18 @@ namespace Modern.Forms
         /// <inheritdoc/>
         public override async Task<DialogResult> ShowDialog (Form owner)
         {
-            var parent = owner.AvWindow.StorageProvider;
-
-            IStorageFolder? startLocation = null;
-            var initPath = GetInitialDirectory ();
-            if (initPath is not null)
-                startLocation = await parent.TryGetFolderFromPathAsync (new Uri (initPath));
-
-            var options = new FilePickerOpenOptions {
+            var request = new OpenFileRequest {
                 AllowMultiple = AllowMultiple,
-                SuggestedStartLocation = startLocation,
+                InitialDirectory = GetInitialDirectory (),
                 Title = Title,
-                FileTypeFilter = filters
+                Filters = filters
             };
 
-            var result = await parent.OpenFilePickerAsync (options);
+            var files = await owner.Backend.ShowOpenFileDialog (request);
 
             FileNames.Clear ();
 
-            var files = result.Select (f => f.GetFullPath ()).WhereNotNull ();
-
-            if (files.Any ())
+            if (files.Length > 0)
                 FileNames.AddRange (files);
 
             return FileNames.Count > 0 ? DialogResult.OK : DialogResult.Cancel;

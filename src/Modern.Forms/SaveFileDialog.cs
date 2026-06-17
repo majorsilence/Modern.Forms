@@ -1,4 +1,4 @@
-using Avalonia.Platform.Storage;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -15,26 +15,17 @@ namespace Modern.Forms
         /// <inheritdoc/>
         public override async Task<DialogResult> ShowDialog (Form owner)
         {
-            var parent = owner.AvWindow.StorageProvider;
-
-            IStorageFolder? startLocation = null;
-            var initPath = GetInitialDirectory ();
-            if (initPath is not null)
-                startLocation = await parent.TryGetFolderFromPathAsync (new Uri (initPath));
-
-            var options = new FilePickerSaveOptions {
+            var request = new SaveFileRequest {
                 DefaultExtension = DefaultExtension ?? DefaultExt,
-                SuggestedStartLocation = startLocation,
+                InitialDirectory = GetInitialDirectory (),
                 SuggestedFileName = FileName,
                 Title = Title,
-                FileTypeChoices = filters
+                Filters = filters
             };
 
-            var result = await parent.SaveFilePickerAsync (options);
+            var file = await owner.Backend.ShowSaveFileDialog (request);
 
             FileNames.Clear ();
-
-            var file = result?.GetFullPath ();
 
             if (file is not null)
                 FileNames.Add (file);

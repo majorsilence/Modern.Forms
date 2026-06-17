@@ -1,33 +1,29 @@
 using System.Drawing;
-using Avalonia.Platform;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
     /// <summary>
     /// Represents a display device on which controls and forms can be drawn.
-    /// Wraps Avalonia.Platform.Screen for cross-platform compatibility.
+    /// Backed by a backend-neutral <see cref="ScreenInfo"/> snapshot.
     /// </summary>
     public class Screen
     {
-        private readonly Avalonia.Platform.Screen _screen;
+        private readonly ScreenInfo _screen;
 
-        internal Screen (Avalonia.Platform.Screen screen)
+        internal Screen (ScreenInfo screen)
         {
             _screen = screen;
         }
 
         /// <summary>Gets the name of the screen device.</summary>
-        public string DeviceName => _screen.DisplayName ?? string.Empty;
+        public string DeviceName => _screen.DeviceName;
 
         /// <summary>Gets the bounds of the screen in device pixels.</summary>
-        public Rectangle Bounds => new Rectangle (
-            _screen.Bounds.X, _screen.Bounds.Y,
-            _screen.Bounds.Width, _screen.Bounds.Height);
+        public Rectangle Bounds => _screen.Bounds;
 
         /// <summary>Gets the working area of the screen (excluding taskbar).</summary>
-        public Rectangle WorkingArea => new Rectangle (
-            _screen.WorkingArea.X, _screen.WorkingArea.Y,
-            _screen.WorkingArea.Width, _screen.WorkingArea.Height);
+        public Rectangle WorkingArea => _screen.WorkingArea;
 
         /// <summary>Gets whether this is the primary screen.</summary>
         public bool Primary => _screen.IsPrimary;
@@ -37,18 +33,7 @@ namespace Modern.Forms
 
         /// <summary>Gets all available screens.</summary>
         public static Screen[] AllScreens
-        {
-            get {
-                var app = Avalonia.Application.Current;
-                var lifetime = app?.ApplicationLifetime as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime;
-                var screens = lifetime?.MainWindow?.Screens?.All;
-
-                if (screens == null)
-                    return Array.Empty<Screen> ();
-
-                return screens.Select (s => new Screen (s)).ToArray ();
-            }
-        }
+            => Platform.Backend.GetScreens ().Select (s => new Screen (s)).ToArray ();
 
         /// <summary>Gets the primary screen.</summary>
         public static Screen? PrimaryScreen

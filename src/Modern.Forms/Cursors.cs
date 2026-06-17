@@ -30,73 +30,73 @@ namespace Modern.Forms
         private static Cursor? wait;
 
         /// <summary>The default app starting cursor provided by the operating system.</summary>
-        public static Cursor AppStarting => app_starting ??= new Cursor (Avalonia.Input.StandardCursorType.AppStarting);
+        public static Cursor AppStarting => app_starting ??= new Cursor (Backends.CursorType.AppStarting);
 
         /// <summary>The default arrow cursor provided by the operating system.</summary>
-        public static Cursor Arrow => arrow ??= new Cursor (Avalonia.Input.StandardCursorType.Arrow);
+        public static Cursor Arrow => arrow ??= new Cursor (Backends.CursorType.Arrow);
 
         /// <summary>The default bottom left corner cursor provided by the operating system.</summary>
-        public static Cursor BottomLeftCorner => bottom_left_corner ??= new Cursor (Avalonia.Input.StandardCursorType.BottomLeftCorner);
+        public static Cursor BottomLeftCorner => bottom_left_corner ??= new Cursor (Backends.CursorType.BottomLeftCorner);
 
         /// <summary>The default bottom right corner cursor provided by the operating system.</summary>
-        public static Cursor BottomRightCorner => bottom_right_corner ??= new Cursor (Avalonia.Input.StandardCursorType.BottomRightCorner);
+        public static Cursor BottomRightCorner => bottom_right_corner ??= new Cursor (Backends.CursorType.BottomRightCorner);
 
         /// <summary>The default bottom cursor provided by the operating system.</summary>
-        public static Cursor BottomSide => bottom_side ??= new Cursor (Avalonia.Input.StandardCursorType.BottomSide);
+        public static Cursor BottomSide => bottom_side ??= new Cursor (Backends.CursorType.BottomSide);
 
         /// <summary>The default cross cursor provided by the operating system.</summary>
-        public static Cursor Cross => cross ??= new Cursor (Avalonia.Input.StandardCursorType.Cross);
+        public static Cursor Cross => cross ??= new Cursor (Backends.CursorType.Cross);
 
         /// <summary>The default drag copy cursor provided by the operating system.</summary>
-        public static Cursor DragCopy => drag_copy ??= new Cursor (Avalonia.Input.StandardCursorType.DragCopy);
+        public static Cursor DragCopy => drag_copy ??= new Cursor (Backends.CursorType.DragCopy);
 
         /// <summary>The default drag link cursor provided by the operating system.</summary>
-        public static Cursor DragLink => drag_link ??= new Cursor (Avalonia.Input.StandardCursorType.DragLink);
+        public static Cursor DragLink => drag_link ??= new Cursor (Backends.CursorType.DragLink);
 
         /// <summary>The default drag move cursor provided by the operating system.</summary>
-        public static Cursor DragMove => drag_move ??= new Cursor (Avalonia.Input.StandardCursorType.DragMove);
+        public static Cursor DragMove => drag_move ??= new Cursor (Backends.CursorType.DragMove);
 
         /// <summary>The default hand cursor provided by the operating system.</summary>
-        public static Cursor Hand => hand ??= new Cursor (Avalonia.Input.StandardCursorType.Hand);
+        public static Cursor Hand => hand ??= new Cursor (Backends.CursorType.Hand);
 
         /// <summary>The default help cursor provided by the operating system.</summary>
-        public static Cursor Help => help ??= new Cursor (Avalonia.Input.StandardCursorType.Help);
+        public static Cursor Help => help ??= new Cursor (Backends.CursorType.Help);
 
         /// <summary>The default ibeam cursor provided by the operating system.</summary>
-        public static Cursor IBeam => ibeam ??= new Cursor (Avalonia.Input.StandardCursorType.Ibeam);
+        public static Cursor IBeam => ibeam ??= new Cursor (Backends.CursorType.Ibeam);
 
         /// <summary>The default left side cursor provided by the operating system.</summary>
-        public static Cursor LeftSide => left_side ??= new Cursor (Avalonia.Input.StandardCursorType.LeftSide);
+        public static Cursor LeftSide => left_side ??= new Cursor (Backends.CursorType.LeftSide);
 
         /// <summary>The default no cursor provided by the operating system.</summary>
-        public static Cursor No => no ??= new Cursor (Avalonia.Input.StandardCursorType.No);
+        public static Cursor No => no ??= new Cursor (Backends.CursorType.No);
 
         /// <summary>The default right side cursor provided by the operating system.</summary>
-        public static Cursor RightSide => right_side ??= new Cursor (Avalonia.Input.StandardCursorType.RightSide);
+        public static Cursor RightSide => right_side ??= new Cursor (Backends.CursorType.RightSide);
 
         /// <summary>The default size all cursor provided by the operating system.</summary>
-        public static Cursor SizeAll => size_all ??= new Cursor (Avalonia.Input.StandardCursorType.SizeAll);
+        public static Cursor SizeAll => size_all ??= new Cursor (Backends.CursorType.SizeAll);
 
         /// <summary>The default size north-south cursor provided by the operating system.</summary>
-        public static Cursor SizeNorthSouth => size_north_south ??= new Cursor (Avalonia.Input.StandardCursorType.SizeNorthSouth);
+        public static Cursor SizeNorthSouth => size_north_south ??= new Cursor (Backends.CursorType.SizeNorthSouth);
 
         /// <summary>The default size west-east cursor provided by the operating system.</summary>
-        public static Cursor SizeWestEast => size_west_east ??= new Cursor (Avalonia.Input.StandardCursorType.SizeWestEast);
+        public static Cursor SizeWestEast => size_west_east ??= new Cursor (Backends.CursorType.SizeWestEast);
 
         /// <summary>The default top left corner cursor provided by the operating system.</summary>
-        public static Cursor TopLeftCorner => top_left_corner ??= new Cursor (Avalonia.Input.StandardCursorType.TopLeftCorner);
+        public static Cursor TopLeftCorner => top_left_corner ??= new Cursor (Backends.CursorType.TopLeftCorner);
 
         /// <summary>The default top right corner cursor provided by the operating system.</summary>
-        public static Cursor TopRightCorner => top_right_corner ??= new Cursor (Avalonia.Input.StandardCursorType.TopRightCorner);
+        public static Cursor TopRightCorner => top_right_corner ??= new Cursor (Backends.CursorType.TopRightCorner);
 
         /// <summary>The default top side cursor provided by the operating system.</summary>
-        public static Cursor TopSide => top_side ??= new Cursor (Avalonia.Input.StandardCursorType.TopSide);
+        public static Cursor TopSide => top_side ??= new Cursor (Backends.CursorType.TopSide);
 
         /// <summary>The default up arrow cursor provided by the operating system.</summary>
-        public static Cursor UpArrow => up_arrow ??= new Cursor (Avalonia.Input.StandardCursorType.UpArrow);
+        public static Cursor UpArrow => up_arrow ??= new Cursor (Backends.CursorType.UpArrow);
 
         /// <summary>The default wait cursor provided by the operating system.</summary>
-        public static Cursor Wait => wait ??= new Cursor (Avalonia.Input.StandardCursorType.Wait);
+        public static Cursor Wait => wait ??= new Cursor (Backends.CursorType.Wait);
 
         /// <summary>The default cursor (alias for Arrow).</summary>
         public static Cursor Default => Arrow;
@@ -108,10 +108,10 @@ namespace Modern.Forms
         public static Cursor SizeWE => SizeWestEast;
 
         /// <summary>The northeast-southwest resize cursor.</summary>
-        public static Cursor SizeNESW => size_nesw ??= new Cursor (Avalonia.Input.StandardCursorType.BottomLeftCorner);
+        public static Cursor SizeNESW => size_nesw ??= new Cursor (Backends.CursorType.BottomLeftCorner);
 
         /// <summary>The northwest-southeast resize cursor.</summary>
-        public static Cursor SizeNWSE => size_nwse ??= new Cursor (Avalonia.Input.StandardCursorType.BottomRightCorner);
+        public static Cursor SizeNWSE => size_nwse ??= new Cursor (Backends.CursorType.BottomRightCorner);
 
         /// <summary>The horizontal split cursor (alias for SizeWestEast).</summary>
         public static Cursor HSplit => SizeWestEast;

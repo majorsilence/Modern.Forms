@@ -80,10 +80,16 @@ namespace Modern.Forms
                 EnsureFramebuffer ();
                 StartRenderTimer ();
             };
-            Closed += (_, _) => StopRenderTimer ();
+            Closed += (_, _) => { StopRenderTimer (); _owner.OnBackendClosed (); };
+            Activated += (_, _) => _owner.OnBackendActivated ();
+            Deactivated += (_, _) => _owner.OnBackendDeactivated ();
         }
 
-        private void OnWindowClosing (object? sender, WindowClosingEventArgs e) { }
+        private void OnWindowClosing (object? sender, WindowClosingEventArgs e)
+        {
+            if (_owner.OnBackendClosing ())
+                e.Cancel = true;
+        }
 
         private void OnSurfaceSizeChanged (object? sender, SizeChangedEventArgs e) => EnsureFramebuffer ();
 
@@ -310,6 +316,11 @@ namespace Modern.Forms
 
         void Backends.IWindowBackend.Activate () => Activate ();
 
+        bool Backends.IWindowBackend.Enabled {
+            get => IsEnabled;
+            set => IsEnabled = value;
+        }
+
         string Backends.IWindowBackend.Title { set => Title = value; }
 
         bool Backends.IWindowBackend.Topmost {
@@ -323,7 +334,94 @@ namespace Modern.Forms
             ExtendClientAreaToDecorationsHint = !useSystemDecorations;
         }
 
-        void Backends.IWindowBackend.SetCursor (object? cursor) => Cursor = cursor as Avalonia.Input.Cursor;
+        void Backends.IWindowBackend.SetCursor (Backends.CursorType cursor) => Cursor = MapCursor (cursor);
+
+        // ── File/folder pickers ──────────────────────────────────────────────────
+        private static Avalonia.Platform.Storage.FilePickerFileType[] MapFilters (System.Collections.Generic.IReadOnlyList<Backends.FileDialogFilter> filters)
+            => filters.Select (f => new Avalonia.Platform.Storage.FilePickerFileType (f.Name) {
+                Patterns = f.Patterns.ToList ()
+            }).ToArray ();
+
+        private async System.Threading.Tasks.Task<Avalonia.Platform.Storage.IStorageFolder?> ResolveStartFolder (string? initialDirectory)
+            => initialDirectory is null ? null : await StorageProvider.TryGetFolderFromPathAsync (new System.Uri (initialDirectory));
+
+        async System.Threading.Tasks.Task<string[]> Backends.IWindowBackend.ShowOpenFileDialog (Backends.OpenFileRequest request)
+        {
+            var options = new Avalonia.Platform.Storage.FilePickerOpenOptions {
+                AllowMultiple = request.AllowMultiple,
+                SuggestedStartLocation = await ResolveStartFolder (request.InitialDirectory),
+                Title = request.Title,
+                FileTypeFilter = MapFilters (request.Filters)
+            };
+
+            var result = await StorageProvider.OpenFilePickerAsync (options);
+            return result.Select (f => f.GetFullPath ()).WhereNotNull ().ToArray ();
+        }
+
+        async System.Threading.Tasks.Task<string?> Backends.IWindowBackend.ShowSaveFileDialog (Backends.SaveFileRequest request)
+        {
+            var options = new Avalonia.Platform.Storage.FilePickerSaveOptions {
+                DefaultExtension = request.DefaultExtension,
+                SuggestedStartLocation = await ResolveStartFolder (request.InitialDirectory),
+                SuggestedFileName = request.SuggestedFileName,
+                Title = request.Title,
+                FileTypeChoices = MapFilters (request.Filters)
+            };
+
+            var result = await StorageProvider.SaveFilePickerAsync (options);
+            return result?.GetFullPath ();
+        }
+
+        async System.Threading.Tasks.Task<string?> Backends.IWindowBackend.ShowOpenFolderDialog (Backends.FolderDialogRequest request)
+        {
+            var options = new Avalonia.Platform.Storage.FolderPickerOpenOptions {
+                AllowMultiple = false,
+                SuggestedStartLocation = await ResolveStartFolder (request.InitialDirectory),
+                Title = request.Title
+            };
+
+            var result = await StorageProvider.OpenFolderPickerAsync (options);
+            return result.Select (f => f.GetFullPath ()).WhereNotNull ().FirstOrDefault ();
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<Backends.CursorType, Avalonia.Input.Cursor> _cursorCache = new ();
+
+        private static Avalonia.Input.Cursor MapCursor (Backends.CursorType cursor)
+        {
+            if (_cursorCache.TryGetValue (cursor, out var cached))
+                return cached;
+
+            var type = cursor switch {
+                Backends.CursorType.Arrow => Avalonia.Input.StandardCursorType.Arrow,
+                Backends.CursorType.AppStarting => Avalonia.Input.StandardCursorType.AppStarting,
+                Backends.CursorType.Cross => Avalonia.Input.StandardCursorType.Cross,
+                Backends.CursorType.Hand => Avalonia.Input.StandardCursorType.Hand,
+                Backends.CursorType.Help => Avalonia.Input.StandardCursorType.Help,
+                Backends.CursorType.Ibeam => Avalonia.Input.StandardCursorType.Ibeam,
+                Backends.CursorType.No => Avalonia.Input.StandardCursorType.No,
+                Backends.CursorType.UpArrow => Avalonia.Input.StandardCursorType.UpArrow,
+                Backends.CursorType.Wait => Avalonia.Input.StandardCursorType.Wait,
+                Backends.CursorType.SizeAll => Avalonia.Input.StandardCursorType.SizeAll,
+                Backends.CursorType.SizeNorthSouth => Avalonia.Input.StandardCursorType.SizeNorthSouth,
+                Backends.CursorType.SizeWestEast => Avalonia.Input.StandardCursorType.SizeWestEast,
+                Backends.CursorType.TopSide => Avalonia.Input.StandardCursorType.TopSide,
+                Backends.CursorType.BottomSide => Avalonia.Input.StandardCursorType.BottomSide,
+                Backends.CursorType.LeftSide => Avalonia.Input.StandardCursorType.LeftSide,
+                Backends.CursorType.RightSide => Avalonia.Input.StandardCursorType.RightSide,
+                Backends.CursorType.TopLeftCorner => Avalonia.Input.StandardCursorType.TopLeftCorner,
+                Backends.CursorType.TopRightCorner => Avalonia.Input.StandardCursorType.TopRightCorner,
+                Backends.CursorType.BottomLeftCorner => Avalonia.Input.StandardCursorType.BottomLeftCorner,
+                Backends.CursorType.BottomRightCorner => Avalonia.Input.StandardCursorType.BottomRightCorner,
+                Backends.CursorType.DragCopy => Avalonia.Input.StandardCursorType.DragCopy,
+                Backends.CursorType.DragLink => Avalonia.Input.StandardCursorType.DragLink,
+                Backends.CursorType.DragMove => Avalonia.Input.StandardCursorType.DragMove,
+                _ => Avalonia.Input.StandardCursorType.Arrow
+            };
+
+            var avCursor = new Avalonia.Input.Cursor (type);
+            _cursorCache[cursor] = avCursor;
+            return avCursor;
+        }
 
         System.Drawing.Point Backends.IWindowBackend.PointToClient (System.Drawing.Point screen)
         {
@@ -351,6 +449,43 @@ namespace Modern.Forms
         });
 
         void Backends.IWindowBackend.Invalidate () => IsDirty = true;
+
+        void Backends.IWindowBackend.SetIcon (byte[]? iconPng)
+            => Icon = iconPng is null ? null : new Avalonia.Controls.WindowIcon (new System.IO.MemoryStream (iconPng));
+
+        System.Drawing.Size Backends.IWindowBackend.MinimumSize {
+            set {
+                MinWidth = value.IsEmpty ? 0 : value.Width;
+                MinHeight = value.IsEmpty ? 0 : value.Height;
+            }
+        }
+
+        System.Drawing.Size Backends.IWindowBackend.MaximumSize {
+            set {
+                MaxWidth = value.IsEmpty ? double.PositiveInfinity : value.Width;
+                MaxHeight = value.IsEmpty ? double.PositiveInfinity : value.Height;
+            }
+        }
+
+        bool Backends.IWindowBackend.CanResize {
+            get => CanResize;
+            set => CanResize = value;
+        }
+
+        bool Backends.IWindowBackend.ShowInTaskbar {
+            get => ShowInTaskbar;
+            set => ShowInTaskbar = value;
+        }
+
+        double Backends.IWindowBackend.Opacity {
+            get => Opacity;
+            set => Opacity = value;
+        }
+
+        FormWindowState Backends.IWindowBackend.WindowState {
+            get => (FormWindowState)(int)WindowState;
+            set => WindowState = (Avalonia.Controls.WindowState)(int)value;
+        }
     }
 
     /// <summary>

@@ -1,5 +1,4 @@
-using Avalonia.Input;
-using Avalonia.Input.Platform;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -8,59 +7,34 @@ namespace Modern.Forms
     /// </summary>
     public static class Clipboard
     {
-        private static IClipboard? GetClipboard ()
-            => Application.OpenForms.FirstOrDefault ()?.AvWindow?.Clipboard;
-
         /// <summary>Gets the contents of the clipboard as text.</summary>
-        public static async Task<string?> GetTextAsync ()
-        {
-            var cb = GetClipboard ();
-            return cb is not null ? await cb.TryGetTextAsync ().ConfigureAwait (false) : null;
-        }
+        public static Task<string?> GetTextAsync ()
+            => Task.FromResult<string?> (Platform.Backend.GetClipboardText ());
 
         /// <summary>Sets the text contents of the clipboard.</summary>
-        public static async Task SetTextAsync (string text)
+        public static Task SetTextAsync (string text)
         {
-            var cb = GetClipboard ();
-            if (cb is not null)
-                await cb.SetTextAsync (text).ConfigureAwait (false);
+            Platform.Backend.SetClipboardText (text);
+            return Task.CompletedTask;
         }
 
         /// <summary>Clears the contents of the clipboard.</summary>
-        public static async Task ClearAsync ()
+        public static Task ClearAsync ()
         {
-            var cb = GetClipboard ();
-            if (cb is not null)
-                await cb.ClearAsync ().ConfigureAwait (false);
+            Platform.Backend.ClearClipboard ();
+            return Task.CompletedTask;
         }
 
         // --- WinForms sync compatibility wrappers ---
 
         /// <summary>Gets the text contents of the clipboard synchronously.</summary>
-        public static string GetText ()
-        {
-            try {
-                return Avalonia.Threading.Dispatcher.UIThread.InvokeAsync (GetTextAsync).GetAwaiter ().GetResult () ?? string.Empty;
-            } catch {
-                return string.Empty;
-            }
-        }
+        public static string GetText () => Platform.Backend.GetClipboardText ();
 
         /// <summary>Sets the text contents of the clipboard synchronously.</summary>
-        public static void SetText (string text)
-        {
-            try {
-                Avalonia.Threading.Dispatcher.UIThread.InvokeAsync (() => SetTextAsync (text)).GetAwaiter ().GetResult ();
-            } catch { }
-        }
+        public static void SetText (string text) => Platform.Backend.SetClipboardText (text);
 
         /// <summary>Clears the clipboard synchronously.</summary>
-        public static void Clear ()
-        {
-            try {
-                Avalonia.Threading.Dispatcher.UIThread.InvokeAsync (ClearAsync).GetAwaiter ().GetResult ();
-            } catch { }
-        }
+        public static void Clear () => Platform.Backend.ClearClipboard ();
 
         /// <summary>Returns whether the clipboard contains text.</summary>
         public static bool ContainsText () => !string.IsNullOrEmpty (GetText ());

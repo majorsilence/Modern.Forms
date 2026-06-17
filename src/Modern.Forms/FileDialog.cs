@@ -1,4 +1,4 @@
-﻿using Avalonia.Platform.Storage;
+﻿using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
@@ -7,7 +7,7 @@ namespace Modern.Forms
     /// </summary>
     public abstract class FileDialog : FileSystemDialog
     {
-        internal List<FilePickerFileType> filters = [];
+        internal List<FileDialogFilter> filters = [];
         private string _filter = string.Empty;
 
         /// <summary>
@@ -17,11 +17,7 @@ namespace Modern.Forms
         /// <param name="extensions">File extensions to filter for, for example: "*.txt", "*.log".</param>
         public void AddFilter (string name, params string[] extensions)
         {
-            var filter = new FilePickerFileType (name) {
-                Patterns = new List<string> (extensions)
-            };
-
-            filters.Add (filter);
+            filters.Add (new FileDialogFilter (name, new List<string> (extensions)));
         }
 
         /// <summary>
@@ -40,7 +36,7 @@ namespace Modern.Forms
                     var patterns = parts[i + 1].Trim ().Split (';')
                         .Select (p => p.Trim ())
                         .ToList ();
-                    filters.Add (new FilePickerFileType (name) { Patterns = patterns });
+                    filters.Add (new FileDialogFilter (name, patterns));
                 }
             }
         }

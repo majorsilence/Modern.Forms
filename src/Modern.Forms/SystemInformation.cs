@@ -4,7 +4,7 @@ namespace Modern.Forms
 {
     /// <summary>
     /// WinForms compatibility: provides system-level information about the user's computer.
-    /// Values are approximations; for exact data use <see cref="Screen"/> or Avalonia's display APIs.
+    /// Values are approximations; for exact data use <see cref="Screen"/>.
     /// </summary>
     public static class SystemInformation
     {

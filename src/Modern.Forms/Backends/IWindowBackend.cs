@@ -43,8 +43,24 @@ namespace Modern.Forms.Backends
         bool Topmost { get; set; }
         /// <summary>Switches between native (system) decorations and borderless self-drawn chrome.</summary>
         void SetSystemDecorations (bool useSystemDecorations);
-        /// <summary>Sets the mouse cursor (a backend-native cursor handle obtained from the backend's cursor factory).</summary>
-        void SetCursor (object? cursor);
+        /// <summary>Sets the mouse cursor (a backend-neutral <see cref="CursorType"/>), or the default when null.</summary>
+        void SetCursor (CursorType cursor);
+        /// <summary>Sets the window icon from PNG bytes, or clears it when null.</summary>
+        void SetIcon (byte[]? iconPng);
+        /// <summary>Sets the minimum window size in logical pixels (empty = no minimum).</summary>
+        Size MinimumSize { set; }
+        /// <summary>Sets the maximum window size in logical pixels (empty = no maximum).</summary>
+        Size MaximumSize { set; }
+        /// <summary>Gets or sets whether the window can be resized by the user.</summary>
+        bool CanResize { get; set; }
+        /// <summary>Gets or sets whether the window appears in the taskbar.</summary>
+        bool ShowInTaskbar { get; set; }
+        /// <summary>Gets or sets the window opacity (0..1).</summary>
+        double Opacity { get; set; }
+        /// <summary>Gets or sets the window state (normal/minimized/maximized).</summary>
+        FormWindowState WindowState { get; set; }
+        /// <summary>Gets or sets whether the window accepts input (used to disable a modal dialog's parent).</summary>
+        bool Enabled { get; set; }
 
         // ── Coordinate conversion ────────────────────────────────────────────────
         /// <summary>Converts a screen point to client coordinates.</summary>
@@ -61,6 +77,14 @@ namespace Modern.Forms.Backends
         // ── Rendering ────────────────────────────────────────────────────────────
         /// <summary>Marks the window as needing a repaint.</summary>
         void Invalidate ();
+
+        // ── File/folder pickers (owned by this window) ───────────────────────────
+        /// <summary>Shows an open-file picker; returns the chosen full paths (empty if cancelled).</summary>
+        System.Threading.Tasks.Task<string[]> ShowOpenFileDialog (OpenFileRequest request);
+        /// <summary>Shows a save-file picker; returns the chosen full path, or null if cancelled.</summary>
+        System.Threading.Tasks.Task<string?> ShowSaveFileDialog (SaveFileRequest request);
+        /// <summary>Shows a folder picker; returns the chosen full path, or null if cancelled.</summary>
+        System.Threading.Tasks.Task<string?> ShowOpenFolderDialog (FolderDialogRequest request);
     }
 
     /// <summary>Identifies a window edge/corner for an interactive resize drag. Backend-neutral.</summary>

@@ -1,12 +1,12 @@
 using System.ComponentModel;
-using Avalonia.Threading;
+using Modern.Forms.Backends;
 
 namespace Modern.Forms
 {
     /// <summary>
     /// WinForms compatibility: executes an operation on a background thread and marshals
     /// completion and progress notifications back to the UI thread.
-    /// This implementation uses Task-based threading with Avalonia's Dispatcher for UI callbacks.
+    /// This implementation uses Task-based threading with the platform backend for UI callbacks.
     /// </summary>
     public class BackgroundWorker : Component
     {
@@ -58,7 +58,7 @@ namespace Modern.Forms
                 } finally {
                     _is_busy = false;
                     var completed = new RunWorkerCompletedEventArgs (args.Result, error, args.Cancel);
-                    Dispatcher.UIThread.Post (() => RunWorkerCompleted?.Invoke (this, completed));
+                    Platform.Backend.Post (() => RunWorkerCompleted?.Invoke (this, completed));
                 }
             });
         }
@@ -77,7 +77,7 @@ namespace Modern.Forms
             if (!WorkerReportsProgress)
                 throw new InvalidOperationException ("WorkerReportsProgress must be true to call ReportProgress.");
             var args = new ProgressChangedEventArgs (percentProgress, userState);
-            Dispatcher.UIThread.Post (() => ProgressChanged?.Invoke (this, args));
+            Platform.Backend.Post (() => ProgressChanged?.Invoke (this, args));
         }
     }
 
