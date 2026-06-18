@@ -61,6 +61,11 @@ namespace Modern.Forms
         /// <summary>Called by the backend when the window is deactivated.</summary>
         internal void OnBackendDeactivated ()
         {
+            // Showing a popup deactivates its parent window; that must NOT dismiss the popup we are
+            // opening. The flag is set only for the duration of PopupWindow.Show.
+            if (Application.SuppressPopupDismiss)
+                return;
+
             Application.ClosePopups ();
             Deactivated?.Invoke (this, EventArgs.Empty);
         }

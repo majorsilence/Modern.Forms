@@ -102,6 +102,36 @@ public class HeadlessBackendTests
     }
 
     [Fact]
+    public void MenuPopup_StaysOpenOnShow_AndDismissesOnRealDeactivation ()
+    {
+        // Regression: showing a popup deactivates its parent; that deactivation (while suppressed)
+        // must NOT dismiss the popup we just opened — otherwise menus render as an empty box.
+        var form = new Form ();
+        var panel = new Panel { Left = 0, Top = 0, Width = 100, Height = 20 };
+        form.Controls.Add (panel);
+        form.Show ();
+
+        var menu = new MenuDropDown ();
+        menu.Items.Add ("Open");
+        menu.Items.Add ("Save");
+        menu.Show (panel, new System.Drawing.Point (0, 20));
+
+        Assert.True (menu.Visible);   // popup is shown, not dismissed by its own show
+
+        // A parent deactivation caused by the popup opening (suppressed) must not dismiss it.
+        Application.SuppressPopupDismiss = true;
+        form.OnBackendDeactivated ();
+        Assert.True (menu.Visible);
+
+        // A genuine deactivation (user clicks away) dismisses it.
+        Application.SuppressPopupDismiss = false;
+        form.OnBackendDeactivated ();
+        Assert.False (menu.Visible);
+
+        form.Close ();
+    }
+
+    [Fact]
     public void ShowDialog_CompletesWithoutRecursion ()
     {
         // Regression: Form.ShowDialog(Form) must call the base window helper, not recurse into itself.

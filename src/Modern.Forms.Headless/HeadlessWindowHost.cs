@@ -24,7 +24,10 @@ namespace Modern.Forms.Headless
         public Point Location { get => _location; set => _location = value; }
         public Size Size { get => _size; set => _size = value; }
         public Size ClientSize => _size;
-        public double Scaling => 1.0;
+
+        // Defaults to 1.0; set the MF_HEADLESS_SCALE env var to simulate a HiDPI display (e.g. "2").
+        public double Scaling =>
+            double.TryParse (Environment.GetEnvironmentVariable ("MF_HEADLESS_SCALE"), out var s) && s > 0 ? s : 1.0;
 
         // ── Lifecycle ──
         // Rendering is on-demand (CapturePng), not on Show — Show only activates the window.

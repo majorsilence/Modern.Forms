@@ -24,6 +24,13 @@ namespace Modern.Forms
         internal static PopupWindow? ActivePopupWindow { get; set; }
 
         /// <summary>
+        /// Set while a popup is being shown, to suppress the popup-dismiss that would otherwise be
+        /// triggered when showing the popup deactivates its parent window (which would immediately
+        /// close the popup we are opening). See <see cref="WindowBase.OnBackendDeactivated"/>.
+        /// </summary>
+        internal static bool SuppressPopupDismiss { get; set; }
+
+        /// <summary>
         /// Hides any open popups.
         /// </summary>
         internal static void ClosePopups (bool closeMenus = true, bool closePopups = true)

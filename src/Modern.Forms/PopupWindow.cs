@@ -37,7 +37,14 @@ namespace Modern.Forms
 
             Application.ActivePopupWindow = this;
 
-            Show ();
+            // Showing the popup deactivates the parent window, whose deactivation handler would
+            // otherwise immediately dismiss this popup. Suppress that for the duration of the show.
+            Application.SuppressPopupDismiss = true;
+            try {
+                Show ();
+            } finally {
+                Application.SuppressPopupDismiss = false;
+            }
         }
 
         /// <summary>Show the PopupWindow at the specified screen coordinates.</summary>
