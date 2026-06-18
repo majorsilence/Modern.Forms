@@ -333,26 +333,60 @@ namespace Modern.Forms.Uno
         }
 
         // ── Input ──
+        private long _lastPointerRightTicks;
+
         private void WireInput ()
         {
             _canvas.PointerPressed += (_, e) => DispatchPointer (e, _owner.HandlePointerPressed);
-            _canvas.PointerReleased += (_, e) => DispatchPointer (e, _owner.HandlePointerReleased);
+            _canvas.PointerReleased += (_, e) => {
+                if (DispatchPointer (e, _owner.HandlePointerReleased) == MouseButtons.Right)
+                    _lastPointerRightTicks = Environment.TickCount64;
+            };
             _canvas.PointerMoved += (_, e) => DispatchPointer (e, _owner.HandlePointerMoved);
             _canvas.PointerExited += (_, e) => DispatchPointer (e, _owner.HandlePointerExited);
             _canvas.KeyDown += (_, e) => { if (_owner.HandleKeyDown (UnoKeyInterop.ToKeys (e.Key))) e.Handled = true; };
             _canvas.KeyUp += (_, e) => { if (_owner.HandleKeyUp (UnoKeyInterop.ToKeys (e.Key))) e.Handled = true; };
             _canvas.CharacterReceived += (_, e) => { if (_owner.HandleTextInput (e.Character.ToString ())) e.Handled = true; };
+
+            // The canonical context-menu trigger: covers right-click, macOS two-finger/Ctrl secondary
+            // click, touch long-press and the keyboard menu key — many of which don't arrive as a
+            // pointer right-button on macOS. Synthesize a right-click so Control.OnClick opens the menu.
+            _canvas.ContextRequested += OnContextRequested;
+        }
+
+        private void OnContextRequested (UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs e)
+        {
+            // Skip if a real pointer right-release just handled this same gesture (avoid a double-open).
+            if (Environment.TickCount64 - _lastPointerRightTicks < 300) {
+                e.Handled = true;
+                return;
+            }
+
+            var scaling = Scaling;
+            int x, y;
+            if (e.TryGetPosition (_canvas, out var pos)) {
+                x = (int) (pos.X * scaling);
+                y = (int) (pos.Y * scaling);
+            } else {
+                return; // no position (rare); let default handling proceed
+            }
+
+            _owner.HandlePointerPressed (MouseButtons.Right, x, y, Keys.None);
+            _owner.HandlePointerReleased (MouseButtons.Right, x, y, Keys.None);
+            e.Handled = true;
         }
 
         private delegate void PointerAction (MouseButtons button, int x, int y, Keys keys);
 
-        private void DispatchPointer (PointerRoutedEventArgs e, PointerAction action)
+        private MouseButtons DispatchPointer (PointerRoutedEventArgs e, PointerAction action)
         {
             var scaling = Scaling;
             var point = e.GetCurrentPoint (_canvas);
             var x = (int) (point.Position.X * scaling);
             var y = (int) (point.Position.Y * scaling);
-            action (UnoKeyInterop.ToButton (point.Properties), x, y, Keys.None);
+            var button = UnoKeyInterop.ToButton (point.Properties);
+            action (button, x, y, Keys.None);
+            return button;
         }
 
         // SKXamlCanvas with a settable cursor (UIElement.ProtectedCursor is protected).
