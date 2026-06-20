@@ -270,6 +270,29 @@ public class HostedSurfaceTests
     }
 
     [Fact]
+    public void TextBox_Text_Recolors_On_Theme_Change_Without_Edit ()
+    {
+        var surface = new HostedSurface (new FakeHostBackend ());
+        var tb = new TextBox { Text = "hello", Left = 5, Top = 5, Width = 120, Height = 28 };
+        var panel = new Panel ();
+        panel.Controls.Add (tb);
+        surface.Content = panel;
+
+        _ = RenderToPng (surface, 200, 100);   // builds the cached text layout (colour baked in)
+        var before = tb.document.GetTextBlock ();
+
+        try {
+            // A theme change must drop the cached layout so the text repaints in the new colour without
+            // requiring the user to focus or edit the field first.
+            Theme.SetBuiltInTheme (BuiltInTheme.Dark);
+            var after = tb.document.GetTextBlock ();
+            Assert.NotSame (before, after);
+        } finally {
+            Theme.SetBuiltInTheme (BuiltInTheme.Light);
+        }
+    }
+
+    [Fact]
     public void ThemeChange_Repaints_Nested_Embedded_Controls ()
     {
         var surface = new HostedSurface (new FakeHostBackend ());

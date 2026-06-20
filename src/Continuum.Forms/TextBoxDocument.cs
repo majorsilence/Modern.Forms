@@ -153,6 +153,13 @@ namespace Continuum.Forms
             return cached_text_block = TextMeasurer.CreateTextBlock (DisplayText, font, textbox.CurrentFontSize, max_size, alignment, color, MaxLines);
         }
 
+        /// <summary>
+        /// Discards the cached text layout so it is rebuilt on the next paint. The foreground colour is
+        /// baked into the cached <see cref="TextBlock"/>, so this must be called when the colour changes
+        /// out-of-band (e.g. a theme change) for the new colour to take effect without a text edit.
+        /// </summary>
+        internal void InvalidateTextBlock () => cached_text_block = null;
+
         public bool InsertText (string str)
         {
             if (read_only)

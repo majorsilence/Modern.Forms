@@ -29,6 +29,15 @@ namespace Continuum.Forms
             VerticalScrollBar.ValueChanged += (o, e) => DoScroll (0, (o as VerticalScrollBar)!.Value - scroll_y);
         }
 
+        /// <inheritdoc/>
+        protected internal override void OnThemeChanged (EventArgs e)
+        {
+            // The text layout caches its foreground colour; drop it so the new theme colour is applied on
+            // the next paint instead of only after a focus/edit rebuilds it.
+            document.InvalidateTextBlock ();
+            base.OnThemeChanged (e);
+        }
+
         /// <summary>
         /// Copies the selected text of the TextBox to the clipboard.
         /// </summary>
