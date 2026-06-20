@@ -33,7 +33,32 @@ namespace Continuum.Forms
             // presenter so child controls receive the expected visible/shown notifications.
             IsHosted = true;
             StartPosition = FormStartPosition.Manual;
+
+            // A HostedSurface is not a Form and is not in Application.OpenForms, so the global theme
+            // change broadcast never reaches it. Register so Application.DoThemeChanged also notifies it —
+            // and crucially does so *after* the Theme.ThemeChanged broadcast has refreshed every
+            // ControlStyle's cached colors, so a synchronous repaint (Uno) picks up the new colors.
+            Application.EmbeddedSurfaces.Add (this);
+
             Show ();
+        }
+
+        /// <summary>Called when the application theme changes; re-themes and repaints the embedded scene.</summary>
+        protected internal virtual void OnThemeChanged (EventArgs e)
+        {
+            foreach (var control in Controls.GetAllControls ())
+                control.OnThemeChanged (e);
+
+            Invalidate ();
+        }
+
+        /// <inheritdoc/>
+        protected override void Dispose (bool disposing)
+        {
+            if (disposing)
+                Application.EmbeddedSurfaces.Remove (this);
+
+            base.Dispose (disposing);
         }
 
         /// <inheritdoc/>

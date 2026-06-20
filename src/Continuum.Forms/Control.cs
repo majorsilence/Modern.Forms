@@ -1239,6 +1239,11 @@ namespace Continuum.Forms
         protected internal virtual void OnThemeChanged (EventArgs e)
         {
             SetState (States.IsDirty, true);
+
+            // Recurse so nested controls also repaint with the new theme. Each control only redraws its
+            // back buffer when it (not just an ancestor) is dirty, so every descendant must be marked.
+            foreach (var child in Controls.GetAllControls ())
+                child.OnThemeChanged (e);
         }
 
         /// <summary>

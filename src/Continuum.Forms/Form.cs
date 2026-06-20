@@ -381,6 +381,9 @@ namespace Continuum.Forms
         {
             foreach (var control in Controls.GetAllControls ())
                 control.OnThemeChanged (e);
+
+            // Repaint the window (backends that only paint on demand, e.g. Uno, won't otherwise refresh).
+            Invalidate ();
         }
 
         internal override void SetWindowStartupLocation (WindowBase? owner = null)

@@ -43,12 +43,24 @@ namespace Continuum.Forms
         }
 
         /// <summary>
-        /// Raises the OnThemeChanged event for all open forms.
+        /// Embedded (non-top-level) surfaces that aren't in <see cref="OpenForms"/> but still need theme
+        /// change notifications — e.g. a <see cref="HostedSurface"/> hosted inside Avalonia/Uno.
+        /// </summary>
+        internal static readonly System.Collections.Generic.List<HostedSurface> EmbeddedSurfaces = new ();
+
+        /// <summary>
+        /// Raises the OnThemeChanged event for all open forms and embedded surfaces. Runs *after* the
+        /// Theme.ThemeChanged broadcast (see <see cref="Theme"/>), so every ControlStyle's cached colors
+        /// are already refreshed before anything repaints — important for backends that repaint
+        /// synchronously on Invalidate (e.g. Uno).
         /// </summary>
         internal static void DoThemeChanged ()
         {
             foreach (var form in OpenForms)
                 form.OnThemeChanged (EventArgs.Empty);
+
+            foreach (var surface in EmbeddedSurfaces.ToArray ())
+                surface.OnThemeChanged (EventArgs.Empty);
         }
 
         /// <summary>

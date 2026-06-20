@@ -71,7 +71,35 @@ public class HostedSurfaceTests
         public Point PointToScreen (Point client) => client;
         public void BeginMoveDrag () { }
         public void BeginResizeDrag (WindowEdge edge) { }
-        public void Invalidate () { }
+
+        // Emulates a backend (e.g. Uno) that repaints synchronously when invalidated. When enabled, each
+        // Invalidate() immediately renders the target surface and samples one pixel's luma — so a theme
+        // change that repaints mid-broadcast (before ControlStyle caches refresh) would be caught.
+        public HostedSurface? RenderTarget;
+        public bool SyncRenderOnInvalidate;
+        public Point SamplePoint;
+        public byte SampledLuma;
+        private bool _rendering;
+
+        public void Invalidate ()
+        {
+            if (!SyncRenderOnInvalidate || RenderTarget is null || _rendering)
+                return;
+
+            _rendering = true;
+            try {
+                using var sk = SKSurface.Create (new SKImageInfo (ClientSizeValue.Width, ClientSizeValue.Height, SKColorType.Bgra8888, SKAlphaType.Premul));
+                sk.Canvas.Clear (SKColors.Transparent);
+                RenderTarget.RenderFrame (sk.Canvas, ClientSizeValue.Width, ClientSizeValue.Height, 1.0);
+                sk.Canvas.Flush ();
+                using var img = sk.Snapshot ();
+                using var px = img.PeekPixels ();
+                var c = px.GetPixelColor (SamplePoint.X, SamplePoint.Y);
+                SampledLuma = (byte) ((c.Red + c.Green + c.Blue) / 3);
+            } finally {
+                _rendering = false;
+            }
+        }
 
         public Task<string[]> ShowOpenFileDialog (OpenFileRequest request) => Task.FromResult (Array.Empty<string> ());
         public Task<string?> ShowSaveFileDialog (SaveFileRequest request) => Task.FromResult<string?> (null);
@@ -176,6 +204,93 @@ public class HostedSurfaceTests
         // Clearing the native control detaches it from the overlay.
         nativeHost.NativeControl = null;
         Assert.Equal (1, backend.Detaches);
+    }
+
+    private static byte LumaAt (HostedSurface surface, int w, int h, int x, int y)
+    {
+        using var sk = SKSurface.Create (new SKImageInfo (w, h, SKColorType.Bgra8888, SKAlphaType.Premul));
+        sk.Canvas.Clear (SKColors.Transparent);
+        surface.RenderFrame (sk.Canvas, w, h, 1.0);
+        sk.Canvas.Flush ();
+        using var img = sk.Snapshot ();
+        using var pixmap = img.PeekPixels ();
+        var c = pixmap.GetPixelColor (x, y);
+        return (byte) ((c.Red + c.Green + c.Blue) / 3);
+    }
+
+    [Fact]
+    public void ThemeChange_Actually_Recolors_Embedded_Render ()
+    {
+        var surface = new HostedSurface (new FakeHostBackend ());
+        surface.Content = new Panel ();   // fills the surface; paints Theme.ControlMidColor
+
+        try {
+            Theme.SetBuiltInTheme (BuiltInTheme.Light);
+            var light = LumaAt (surface, 200, 100, 150, 50);
+
+            Theme.SetBuiltInTheme (BuiltInTheme.Dark);
+            var dark = LumaAt (surface, 200, 100, 150, 50);
+
+            // The embedded panel must actually re-render darker after the host switches to a dark theme.
+            Assert.True (light > dark + 40, $"Embedded render should darken on dark theme (light={light}, dark={dark}).");
+        } finally {
+            Theme.SetBuiltInTheme (BuiltInTheme.Light);
+        }
+    }
+
+    [Fact]
+    public void ThemeChange_With_Synchronous_Repaint_Uses_Fresh_Colors ()
+    {
+        // Reproduces the Uno failure: a backend that repaints synchronously on Invalidate must still see
+        // refreshed ControlStyle colors (e.g. a TextBox's cached ControlLowColor) — i.e. embedded surfaces
+        // must be notified AFTER the Theme.ThemeChanged broadcast, not during it.
+        var backend = new FakeHostBackend { SamplePoint = new Point (60, 20) };
+        var surface = new HostedSurface (backend);
+        backend.RenderTarget = surface;
+
+        var panel = new Panel ();
+        panel.Controls.Add (new TextBox { Left = 10, Top = 10, Width = 120, Height = 28 });
+        surface.Content = panel;
+
+        _ = RenderToPng (surface, 200, 100);
+        backend.SyncRenderOnInvalidate = true;
+
+        try {
+            Theme.SetBuiltInTheme (BuiltInTheme.Light);
+            var light = backend.SampledLuma;
+
+            Theme.SetBuiltInTheme (BuiltInTheme.Dark);
+            var dark = backend.SampledLuma;
+
+            Assert.True (light > dark + 40, $"TextBox should recolor on synchronous repaint (light={light}, dark={dark}).");
+        } finally {
+            backend.SyncRenderOnInvalidate = false;
+            Theme.SetBuiltInTheme (BuiltInTheme.Light);
+        }
+    }
+
+    [Fact]
+    public void ThemeChange_Repaints_Nested_Embedded_Controls ()
+    {
+        var surface = new HostedSurface (new FakeHostBackend ());
+
+        var panel = new Panel ();
+        var nested = new Label { Text = "nested", Left = 5, Top = 5, Width = 80, Height = 20 };
+        panel.Controls.Add (nested);
+        surface.Content = panel;
+
+        // Paint once to clear the initial dirty state.
+        _ = RenderToPng (surface, 200, 100);
+        Assert.False (nested.NeedsPaint);
+
+        try {
+            // A host-driven theme change must reach the embedded surface (not in Application.OpenForms)
+            // and recurse into nested controls so they repaint with the new colors.
+            Theme.SetBuiltInTheme (BuiltInTheme.Dark);
+            Assert.True (nested.NeedsPaint, "Nested embedded control should be marked for repaint on theme change.");
+        } finally {
+            Theme.SetBuiltInTheme (BuiltInTheme.Light);
+        }
     }
 
     [Fact]
