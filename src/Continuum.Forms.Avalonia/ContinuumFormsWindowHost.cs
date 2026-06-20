@@ -31,7 +31,7 @@ namespace Continuum.Forms
     /// native-framebuffer approach and is reliable across all Avalonia 12 platforms.
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage ("Design", "CA1001", Justification = "_framebuffer is disposed in OnClosed; Window lifecycle manages the call.")]
-    internal class ContinuumFormsWindowHost : Window, Continuum.Forms.Backends.IWindowBackend
+    internal class ContinuumFormsWindowHost : Window, Continuum.Forms.Backends.IWindowBackend, Continuum.Forms.Backends.INativeControlHostBackend
     {
         private readonly WindowBase _owner;
 
@@ -41,6 +41,8 @@ namespace Continuum.Forms
         // Avalonia displays it at logical size via the Image control.
         private WriteableBitmap? _framebuffer;
         private readonly AvImage _surface;
+        private readonly Canvas _overlay;
+        private readonly System.Collections.Generic.Dictionary<Continuum.Forms.NativeControlHost, Avalonia.Controls.Control> _overlays = new ();
         private DispatcherTimer? _renderTimer;
 
         // Set by InvalidateVisual() calls so the timer knows to repaint.
@@ -63,12 +65,20 @@ namespace Continuum.Forms
                 Stretch = Stretch.Fill
             };
 
-            // Grid stretches its children to fill available space.
+            // Transparent overlay for native controls hosted inside the Continuum scene (airspace).
+            _overlay = new Canvas {
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                IsHitTestVisible = true
+            };
+
+            // Grid stretches its children to fill available space. The overlay sits above the framebuffer.
             var grid = new Grid {
                 HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
             };
             grid.Children.Add (_surface);
+            grid.Children.Add (_overlay);
             Content = grid;
 
             Closing += OnWindowClosing;
@@ -449,6 +459,46 @@ namespace Continuum.Forms
         });
 
         void Backends.IWindowBackend.Invalidate () => IsDirty = true;
+
+        // ── INativeControlHostBackend (native Avalonia controls hosted inside the Continuum scene) ─────
+
+        void Backends.INativeControlHostBackend.AttachNativeControl (Continuum.Forms.NativeControlHost host, object nativeControl)
+        {
+            if (nativeControl is not Avalonia.Controls.Control control)
+                return;
+
+            if (_overlays.TryGetValue (host, out var existing) && !ReferenceEquals (existing, control))
+                _overlay.Children.Remove (existing);
+
+            _overlays[host] = control;
+            if (!_overlay.Children.Contains (control))
+                _overlay.Children.Add (control);
+        }
+
+        void Backends.INativeControlHostBackend.UpdateNativeControl (Continuum.Forms.NativeControlHost host, System.Drawing.Rectangle logicalBounds, System.Drawing.Rectangle clipBounds, bool visible)
+        {
+            if (!_overlays.TryGetValue (host, out var control))
+                return;
+
+            Canvas.SetLeft (control, logicalBounds.X);
+            Canvas.SetTop (control, logicalBounds.Y);
+            control.Width = logicalBounds.Width;
+            control.Height = logicalBounds.Height;
+            control.IsVisible = visible;
+
+            // Clip to the visible viewport (local to the control). Null when fully visible.
+            control.Clip = clipBounds == logicalBounds
+                ? null
+                : new RectangleGeometry (new Rect (
+                    clipBounds.X - logicalBounds.X, clipBounds.Y - logicalBounds.Y,
+                    clipBounds.Width, clipBounds.Height));
+        }
+
+        void Backends.INativeControlHostBackend.DetachNativeControl (Continuum.Forms.NativeControlHost host)
+        {
+            if (_overlays.Remove (host, out var control))
+                _overlay.Children.Remove (control);
+        }
 
         void Backends.IWindowBackend.SetIcon (byte[]? iconPng)
             => Icon = iconPng is null ? null : new Avalonia.Controls.WindowIcon (new System.IO.MemoryStream (iconPng));

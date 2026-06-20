@@ -21,12 +21,14 @@ namespace Continuum.Forms.Uno
     /// not place/strip-chrome secondary <see cref="Window"/>s correctly (AppWindow.Position returns
     /// (0,0), Move uses an AppKit bottom-left origin, and the title bar can't be removed).
     /// </summary>
-    internal sealed class UnoWindowHost : IWindowBackend
+    internal sealed class UnoWindowHost : IWindowBackend, IUnoHostSurface, INativeControlHostBackend
     {
         private readonly WindowBase _owner;
         private readonly bool _isPopup;
-        private readonly UnoWindowHost? _parentHost;
+        private readonly IUnoHostSurface? _parentHost;
         private readonly CursorCanvas _canvas;
+        private readonly Microsoft.UI.Xaml.Controls.Grid _root;
+        private readonly System.Collections.Generic.Dictionary<Continuum.Forms.NativeControlHost, Microsoft.UI.Xaml.UIElement> _overlays = new ();
 
         // Exactly one of these is non-null: _window for top-level windows, _popup for overlays.
         private readonly Window? _window;
@@ -38,7 +40,7 @@ namespace Continuum.Forms.Uno
 
         private bool PopupMode => _popup is not null;
 
-        public UnoWindowHost (WindowBase owner, bool isPopup, UnoWindowHost? parentHost)
+        public UnoWindowHost (WindowBase owner, bool isPopup, IUnoHostSurface? parentHost)
         {
             _owner = owner;
             _isPopup = isPopup;
@@ -54,18 +56,23 @@ namespace Continuum.Forms.Uno
 
             WireInput ();
 
+            // Wrap the drawing canvas in a Grid so native controls hosted inside the Continuum scene
+            // (NativeControlHost / airspace overlay) can be layered above it.
+            _root = new Microsoft.UI.Xaml.Controls.Grid ();
+            _root.Children.Add (_canvas);
+
             if (isPopup && parentHost is not null) {
                 // In-window overlay — no separate OS window, so no chrome / positioning quirks.
-                _popup = new Popup { Child = _canvas };
+                _popup = new Popup { Child = _root };
             } else {
-                _window = new Window { Content = _canvas };
+                _window = new Window { Content = _root };
                 WireLifecycle ();
                 ApplyDecorations ();
             }
         }
 
-        internal Microsoft.UI.Xaml.XamlRoot? CanvasXamlRoot => _canvas.XamlRoot;
-        internal double HostScaling => _canvas.XamlRoot?.RasterizationScale ?? 1.0;
+        public Microsoft.UI.Xaml.XamlRoot? CanvasXamlRoot => _canvas.XamlRoot;
+        public double HostScaling => _canvas.XamlRoot?.RasterizationScale ?? 1.0;
 
         private Microsoft.UI.Windowing.OverlappedPresenter? Presenter
             => _window?.AppWindow?.Presenter as Microsoft.UI.Windowing.OverlappedPresenter;
@@ -326,6 +333,48 @@ namespace Continuum.Forms.Uno
         // ── Drag (custom chrome) — no portable Uno API; see docs/backends.md. ──
         public void BeginMoveDrag () { }
         public void BeginResizeDrag (WindowEdge edge) { }
+
+        // ── INativeControlHostBackend (native Uno UIElements hosted inside the Continuum scene) ────────
+        public void AttachNativeControl (Continuum.Forms.NativeControlHost host, object nativeControl)
+        {
+            if (nativeControl is not Microsoft.UI.Xaml.UIElement element)
+                return;
+
+            if (_overlays.TryGetValue (host, out var existing) && !ReferenceEquals (existing, element))
+                _root.Children.Remove (existing);
+
+            _overlays[host] = element;
+            if (!_root.Children.Contains (element))
+                _root.Children.Add (element);
+        }
+
+        public void UpdateNativeControl (Continuum.Forms.NativeControlHost host, System.Drawing.Rectangle logicalBounds, System.Drawing.Rectangle clipBounds, bool visible)
+        {
+            if (!_overlays.TryGetValue (host, out var element) || element is not Microsoft.UI.Xaml.FrameworkElement fe)
+                return;
+
+            fe.HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Left;
+            fe.VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Top;
+            fe.Margin = new Microsoft.UI.Xaml.Thickness (logicalBounds.X, logicalBounds.Y, 0, 0);
+            fe.Width = logicalBounds.Width;
+            fe.Height = logicalBounds.Height;
+            fe.Visibility = visible ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+
+            // Clip to the visible viewport (local to the element). Null when fully visible.
+            fe.Clip = clipBounds == logicalBounds
+                ? null
+                : new Microsoft.UI.Xaml.Media.RectangleGeometry {
+                    Rect = new Windows.Foundation.Rect (
+                        clipBounds.X - logicalBounds.X, clipBounds.Y - logicalBounds.Y,
+                        clipBounds.Width, clipBounds.Height)
+                };
+        }
+
+        public void DetachNativeControl (Continuum.Forms.NativeControlHost host)
+        {
+            if (_overlays.Remove (host, out var element))
+                _root.Children.Remove (element);
+        }
 
         // ── File/folder pickers (top-level windows only) ──
         public async Task<string[]> ShowOpenFileDialog (OpenFileRequest request)

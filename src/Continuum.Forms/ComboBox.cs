@@ -130,10 +130,10 @@ namespace Continuum.Forms
                     popup?.Hide ();
                     OnDropDownClosed (EventArgs.Empty);
                 } else if (!DroppedDown && value) {
-                    if (FindForm () is not Form form)
-                        throw new InvalidOperationException ("Cannot drop down a ComboBox that is not parented to a Form");
+                    if (FindWindow () is not WindowBase window)
+                        throw new InvalidOperationException ("Cannot drop down a ComboBox that is not parented to a window");
 
-                    popup ??= new PopupWindow (form) {
+                    popup ??= new PopupWindow (window) {
                         Size = new Size (Width, 102)
                     };
 

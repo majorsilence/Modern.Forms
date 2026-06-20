@@ -5,12 +5,16 @@ namespace Continuum.Forms
     /// </summary>
     public class PopupWindow : WindowBase
     {
-        private readonly Form parent_form;
+        private readonly WindowBase parent_form;
 
         /// <summary>
         /// Initializes a new instance of the PopupWindow class.
         /// </summary>
-        public PopupWindow (Form parentForm)
+        /// <param name="parentForm">
+        /// The owning window. Usually a <see cref="Form"/>, but may be any <see cref="WindowBase"/>
+        /// (e.g. a <see cref="HostedSurface"/> when Continuum.Forms is embedded in another toolkit).
+        /// </param>
+        public PopupWindow (WindowBase parentForm)
         {
             InitWindow (Continuum.Forms.Backends.Platform.Backend.CreateWindow (this, isPopup: true));
 

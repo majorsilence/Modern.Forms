@@ -181,13 +181,13 @@ namespace Continuum.Forms
         private void ShowPopup (Control control, string text, MouseEventArgs e)
         {
             try {
-                var form = control.FindForm ();
+                var window = control.FindWindow ();
 
-                if (form is null)
+                if (window is null)
                     return;
 
                 if (popup is null || popup_label is null) {
-                    popup = new PopupWindow (form);
+                    popup = new PopupWindow (window);
                     popup_label = popup.Controls.Add (new Label { Dock = DockStyle.Fill });
                     popup_label.Style.Border.Width = 1;
                 }

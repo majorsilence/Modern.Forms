@@ -7,7 +7,7 @@ namespace Continuum.Forms
     /// </summary>
     public class MenuDropDown : MenuBase
     {
-        private Form? parent_form;
+        private WindowBase? parent_form;
         private PopupWindow? popup;
         private int width = 400;
         private int height = 400;
@@ -55,7 +55,7 @@ namespace Continuum.Forms
             if (base.FindForm () is Form f)
                 return f;
 
-            return parent_form;
+            return parent_form as Form;
         }
 
         /// <summary>
@@ -129,11 +129,11 @@ namespace Continuum.Forms
         public virtual void Show (Control parent, Point location)
         {
             if (popup == null) {
-                if (parent.FindForm () is not Form parent_form)
-                    throw new InvalidOperationException ("Control 'parent' must belong to a Form.");
+                if (parent.FindWindow () is not WindowBase parent_window)
+                    throw new InvalidOperationException ("Control 'parent' must belong to a window.");
 
-                this.parent_form = parent_form;
-                popup = new PopupWindow (parent_form);
+                this.parent_form = parent_window;
+                popup = new PopupWindow (parent_window);
                 popup.Controls.Add (this);
             }
 

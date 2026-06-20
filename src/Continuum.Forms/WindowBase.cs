@@ -20,6 +20,10 @@ namespace Continuum.Forms
         private Cursor? current_cursor;
         internal bool shown;
 
+        // True when this window is embedded inside another UI toolkit (see HostedSurface) rather than
+        // owning a top-level OS window. Used to suppress top-level-only behaviour (chrome, etc.).
+        internal bool IsHosted;
+
         /// <summary>
         /// Initializes the platform backend. Subclasses must call <see cref="InitWindow"/> before
         /// accessing any window or adapter members.

@@ -82,12 +82,19 @@ namespace Continuum.Forms.Uno
             // Uno has no synchronous "pump pending work" primitive; the dispatcher drains on its own.
         }
 
-        private UnoWindowHost? _mainHost;
+        private IUnoHostSurface? _mainHost;
+
+        /// <summary>
+        /// Registers the surface that popups (combo dropdowns, menus, tooltips) should attach their
+        /// overlay to. Called by <see cref="ContinuumFormsPresenter"/> when Continuum.Forms is embedded
+        /// in an existing Uno app (where no top-level Continuum window is created).
+        /// </summary>
+        internal void RegisterHostSurface (IUnoHostSurface host) => _mainHost = host;
 
         /// <inheritdoc/>
         public IWindowBackend CreateWindow (WindowBase owner, bool isPopup)
         {
-            // Popups render as in-window overlays parented to the main window's XamlRoot.
+            // Popups render as in-window overlays parented to the main surface's XamlRoot.
             var host = new UnoWindowHost (owner, isPopup, isPopup ? _mainHost : null);
             if (!isPopup)
                 _mainHost = host;
