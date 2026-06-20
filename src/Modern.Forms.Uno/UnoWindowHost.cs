@@ -47,6 +47,10 @@ namespace Modern.Forms.Uno
 
             _canvas = new CursorCanvas ();
             _canvas.PaintSurface += OnPaintSurface;
+            // On the Windows/X11 heads the canvas only receives keyboard events while it holds focus; grab it
+            // once it's in the visual tree (and on Show / pointer press). On macOS routed key events never
+            // reach the canvas, so also hook the native host's KeyDown (see WireMacOSKeyboard).
+            _canvas.Loaded += (_, _) => { TryFocus (); WireMacOSKeyboard (); };
 
             WireInput ();
 
@@ -119,6 +123,70 @@ namespace Modern.Forms.Uno
 
             ApplyDecorations ();
             _window!.Activate ();
+            TryFocus ();
+            // Activation/focus and the native host can settle a tick later; retry on the dispatcher too.
+            _canvas.DispatcherQueue?.TryEnqueue (() => { TryFocus (); WireMacOSKeyboard (); });
+            WireMacOSKeyboard ();
+        }
+
+        // On the macOS Skia head the canvas never receives routed XAML key events (focus is correct, but the
+        // managed input pipeline doesn't surface KeyDown to an SKXamlCanvas). The native MacOSWindowHost does
+        // expose a KeyDown event, so hook that directly (via reflection — the host type is internal). No-op on
+        // other heads (the type isn't present), where the routed handlers above carry the keyboard.
+        private bool _macKeyboardWired;
+
+        private void WireMacOSKeyboard ()
+        {
+            if (_macKeyboardWired || _window is null)
+                return;
+            try {
+                var hostType = Type.GetType ("Uno.UI.Runtime.Skia.MacOS.MacOSWindowHost, Uno.UI.Runtime.Skia.MacOS");
+                if (hostType is null)
+                    return;   // not the macOS head
+
+                var windowsField = hostType.GetField ("_windows", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                var winField = hostType.GetField ("_winUIWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var keyDownEvt = hostType.GetEvent ("KeyDown");
+                var keyUpEvt = hostType.GetEvent ("KeyUp");
+                if (windowsField?.GetValue (null) is not System.Collections.IDictionary dict || winField is null || keyDownEvt is null)
+                    return;
+
+                foreach (var value in dict.Values) {
+                    if (value is null)
+                        continue;
+                    var tryGet = value.GetType ().GetMethod ("TryGetTarget");
+                    if (tryGet is null)
+                        continue;
+                    var args = new object?[] { null };
+                    if (tryGet.Invoke (value, args) is not true || args[0] is not { } host)
+                        continue;
+                    if (!ReferenceEquals (winField.GetValue (host), _window))
+                        continue;
+
+                    keyDownEvt.AddEventHandler (host, new Windows.Foundation.TypedEventHandler<object, Windows.UI.Core.KeyEventArgs> (OnMacKeyDown));
+                    keyUpEvt?.AddEventHandler (host, new Windows.Foundation.TypedEventHandler<object, Windows.UI.Core.KeyEventArgs> (OnMacKeyUp));
+                    _macKeyboardWired = true;
+                    return;
+                }
+            } catch {
+                // Reflection into the internal host is best-effort; the routed handlers remain as a fallback.
+            }
+        }
+
+        private void OnMacKeyDown (object sender, Windows.UI.Core.KeyEventArgs e)
+        {
+            if (_owner.HandleKeyDown (UnoKeyInterop.ToKeys (e.VirtualKey))) e.Handled = true;
+        }
+
+        private void OnMacKeyUp (object sender, Windows.UI.Core.KeyEventArgs e)
+        {
+            if (_owner.HandleKeyUp (UnoKeyInterop.ToKeys (e.VirtualKey))) e.Handled = true;
+        }
+
+        // Give the drawing canvas keyboard focus so KeyDown/KeyUp/character events route to it (Windows/X11).
+        private void TryFocus ()
+        {
+            try { _canvas.Focus (FocusState.Programmatic); } catch { }
         }
 
         private void ShowPopup ()
@@ -142,6 +210,7 @@ namespace Modern.Forms.Uno
 
             _popup!.IsOpen = true;
             _owner.OnBackendActivated ();
+            TryFocus ();
             _canvas.Invalidate ();
         }
 
@@ -365,15 +434,22 @@ namespace Modern.Forms.Uno
 
         private void WireInput ()
         {
-            _canvas.PointerPressed += (_, e) => DispatchPointer (e, _owner.HandlePointerPressed);
+            _canvas.PointerPressed += (_, e) => { TryFocus (); DispatchPointer (e, _owner.HandlePointerPressed); };
             _canvas.PointerReleased += (_, e) => {
                 if (DispatchPointer (e, _owner.HandlePointerReleased) == MouseButtons.Right)
                     _lastPointerRightTicks = Environment.TickCount64;
             };
             _canvas.PointerMoved += (_, e) => DispatchPointer (e, _owner.HandlePointerMoved);
             _canvas.PointerExited += (_, e) => DispatchPointer (e, _owner.HandlePointerExited);
-            _canvas.KeyDown += (_, e) => { if (_owner.HandleKeyDown (UnoKeyInterop.ToKeys (e.Key))) e.Handled = true; };
-            _canvas.KeyUp += (_, e) => { if (_owner.HandleKeyUp (UnoKeyInterop.ToKeys (e.Key))) e.Handled = true; };
+
+            // Routed key events — the standard path on the Windows/X11 Skia heads. (On the macOS head these
+            // never fire for the canvas; WireMacOSKeyboard hooks the native host's KeyDown there instead.)
+            _canvas.AddHandler (UIElement.KeyDownEvent,
+                new Microsoft.UI.Xaml.Input.KeyEventHandler ((_, e) => {
+                    if (!e.Handled && _owner.HandleKeyDown (UnoKeyInterop.ToKeys (e.Key))) e.Handled = true;
+                }), handledEventsToo: true);
+            _canvas.AddHandler (UIElement.KeyUpEvent,
+                new Microsoft.UI.Xaml.Input.KeyEventHandler ((_, e) => { if (!e.Handled && _owner.HandleKeyUp (UnoKeyInterop.ToKeys (e.Key))) e.Handled = true; }), handledEventsToo: true);
             _canvas.CharacterReceived += (_, e) => { if (_owner.HandleTextInput (e.Character.ToString ())) e.Handled = true; };
 
             // The canonical context-menu trigger: covers right-click, macOS two-finger/Ctrl secondary
@@ -420,6 +496,16 @@ namespace Modern.Forms.Uno
         // SKXamlCanvas with a settable cursor (UIElement.ProtectedCursor is protected).
         private sealed class CursorCanvas : SKXamlCanvas
         {
+            public CursorCanvas ()
+            {
+                // Focusable so it can receive keyboard input; no focus rectangle around the drawing surface.
+                IsTabStop = true;
+                UseSystemFocusVisuals = false;
+                // Stop the XAML focus manager from eating arrow keys for directional navigation before they
+                // surface as KeyDown — Modern.Forms does its own list/tree/arrow navigation.
+                XYFocusKeyboardNavigation = Microsoft.UI.Xaml.Input.XYFocusKeyboardNavigationMode.Disabled;
+            }
+
             public void SetCursorShape (Microsoft.UI.Input.InputSystemCursorShape shape)
             {
                 try { ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create (shape); } catch { }
