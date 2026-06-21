@@ -1,9 +1,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Drawing;
+using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Xml.Linq;
 using Continuum.Forms;
+using Continuum.Forms.Renderers;
 using SkiaSharp;
 
 namespace Continuum.Forms.Telerik
@@ -13,13 +18,56 @@ namespace Continuum.Forms.Telerik
     /// common RadGridView surface: <see cref="MasterTemplate"/>/<see cref="TableViewDefinition"/>
     /// boilerplate, the GridView* column types, and Telerik-style row/cell access via
     /// <see cref="GridViewRowInfo"/>/<see cref="GridViewCellInfo"/> wrappers over the underlying rows.
+    ///
+    /// In addition to the data surface, the control implements the interactive end-user features of
+    /// RadGridView: in-grid column <b>filtering</b> (funnel popup with a distinct-value checklist and a
+    /// condition), header-click <b>sorting</b>, <b>grouping</b> (right-click "Group by", drag a header
+    /// into the group panel, expand/collapse groups), <b>drag-to-reorder</b> columns, and
+    /// <see cref="SaveLayout(string)"/>/<see cref="LoadLayout(string)"/> persistence to Telerik-shaped XML.
     /// </summary>
     public class RadGridView : DataGridView
     {
+        // The full, untransformed set of data rows. base.Rows holds the *display* projection
+        // (filtered + sorted + grouped, with injected group-header rows); _master is the source of truth.
+        private readonly List<DataGridViewRow> _master = new ();
+        // Guards re-entrancy: true while we (not the user) are rewriting base.Rows.
+        private bool _applyingView;
+        private bool _suspendRebuild;
+        // Group path keys (see BuildGroupKey) that the user has collapsed.
+        private readonly HashSet<string> _collapsed = new (StringComparer.Ordinal);
+
+        // ── Interaction state (read by RadGridViewRenderer) ──
+        private int _headerDragColumn = -1;
+        private Point _dragStart;
+        internal bool DragActive { get; private set; }
+        internal int DragColumn => _headerDragColumn;
+        internal Point DragLocation { get; private set; }
+        internal int DragTargetColumn { get; private set; } = -1;
+        internal bool DragOverGroupPanel { get; private set; }
+
+        // Layout rectangles published by the renderer for hit-testing.
+        internal readonly List<GroupPillLayout> GroupPillLayouts = new ();
+        internal readonly Dictionary<int, Rectangle> FilterGlyphRects = new ();
+
+        /// <summary>Logical height of the group panel band shown above the column headers.</summary>
+        internal const int GroupPanelLogicalHeight = 34;
+
+        static RadGridView ()
+        {
+            // RadGridView gets its own renderer (group panel, filter glyphs, group-header rows). The
+            // renderer derives from DataGridViewRenderer but re-declares its Type as RadGridView.
+            RenderManager.SetRenderer<RadGridView> (new RadGridViewRenderer ());
+        }
+
         /// <summary>Initializes a new instance of the RadGridView class.</summary>
         public RadGridView ()
         {
             MasterTemplate = new GridViewTemplate (this);
+
+            // Descriptor changes (add/remove/clear) rebuild the displayed view.
+            SortDescriptors.Changed = () => { SyncSortGlyphs (); RebuildView (); };
+            GroupDescriptors.Changed = () => { RefreshLayout (); RebuildView (); };
+            FilterDescriptors.Changed = RebuildView;
 
             // Forward the real (raised) base events to their Telerik-shaped equivalents so migrated
             // grid handlers actually run. CellClick also drives CommandCellClick (Telerik's button-
@@ -34,6 +82,10 @@ namespace Continuum.Forms.Telerik
                 var args = BuildCellArgs (e.ColumnIndex, e.RowIndex);
                 _cellValueChanged?.Invoke (this, args);
                 _valueChanged?.Invoke (this, args);
+
+                // A value change in a grouped/filtered/sorted column must re-flow the view.
+                if (HasViewTransform)
+                    RebuildView ();
             };
             base.CellEndEdit += (_, e) => _cellEndEdit?.Invoke (this, BuildCellArgs (e.ColumnIndex, e.RowIndex));
             base.CellBeginEdit += (_, e) => _cellBeginEdit?.Invoke (this, new GridViewCellCancelEventArgs { RowIndex = e.RowIndex, ColumnIndex = e.ColumnIndex, Row = RowAt (e.RowIndex) });
@@ -61,19 +113,27 @@ namespace Continuum.Forms.Telerik
         /// <summary>Gets the root element of the grid (stub).</summary>
         public RadElement RootElement { get; } = new RadElement ();
 
-        /// <summary>Gets the current row as a Telerik <see cref="GridViewRowInfo"/>, or null.</summary>
+        /// <summary>Gets the current row as a Telerik <see cref="GridViewRowInfo"/>, or null (group-header rows return null).</summary>
         public new GridViewRowInfo? CurrentRow {
             get {
                 var row = base.CurrentRow;
-                return row is null ? null : new GridViewRowInfo (row);
+                return row is null || IsGroupRow (row) ? null : new GridViewRowInfo (row);
             }
         }
 
-        /// <summary>Gets the rows, accessible Telerik-style (indexer/enumeration yield <see cref="GridViewRowInfo"/>) while still supporting Count/Add/Clear/Remove.</summary>
+        /// <summary>Gets the data rows, accessible Telerik-style (indexer/enumeration yield <see cref="GridViewRowInfo"/>). Injected group-header rows are not included.</summary>
         public new GridViewRowInfoCollection Rows => new GridViewRowInfoCollection (base.Rows);
 
-        /// <summary>Gets the number of rows.</summary>
-        public int RowCount => base.Rows.Count;
+        /// <summary>Gets the number of data rows (excludes injected group-header rows).</summary>
+        public int RowCount {
+            get {
+                var count = 0;
+                foreach (var row in base.Rows)
+                    if (!IsGroupRow (row))
+                        count++;
+                return count;
+            }
+        }
 
         // ── Telerik config surface (forwarded to MasterTemplate so grid.X and grid.MasterTemplate.X agree) ──
 
@@ -83,14 +143,19 @@ namespace Continuum.Forms.Telerik
         public bool AllowDeleteRow { get => MasterTemplate.AllowDeleteRow; set => MasterTemplate.AllowDeleteRow = value; }
         /// <summary>Gets or sets whether rows can be edited.</summary>
         public bool AllowEditRow { get => MasterTemplate.AllowEditRow; set => MasterTemplate.AllowEditRow = value; }
-        /// <summary>Gets or sets whether columns can be reordered.</summary>
+        /// <summary>Gets or sets whether columns can be reordered by dragging their headers.</summary>
         public bool AllowColumnReorder { get => MasterTemplate.AllowColumnReorder; set => MasterTemplate.AllowColumnReorder = value; }
         /// <summary>Gets or sets whether the column chooser is allowed.</summary>
         public bool AllowColumnChooser { get => MasterTemplate.AllowColumnChooser; set => MasterTemplate.AllowColumnChooser = value; }
         /// <summary>Gets or sets whether multiple rows can be selected.</summary>
-        public bool MultiSelect { get => MasterTemplate.MultiSelect; set => MasterTemplate.MultiSelect = value; }
-        /// <summary>Gets or sets whether filtering is enabled.</summary>
-        public bool EnableFiltering { get => MasterTemplate.EnableFiltering; set => MasterTemplate.EnableFiltering = value; }
+        public new bool MultiSelect { get => MasterTemplate.MultiSelect; set { MasterTemplate.MultiSelect = value; base.MultiSelect = value; } }
+
+        /// <summary>Gets or sets whether the in-grid column filtering UI (funnel popups) is enabled.</summary>
+        public bool EnableFiltering {
+            get => MasterTemplate.EnableFiltering;
+            set { MasterTemplate.EnableFiltering = value; Invalidate (); }
+        }
+
         /// <summary>Gets or sets whether sorting is enabled. When false, header-click sorting is disabled for every column.</summary>
         public bool EnableSorting {
             get => MasterTemplate.EnableSorting;
@@ -115,14 +180,121 @@ namespace Continuum.Forms.Telerik
             base.OnColumnsChanged ();
             ApplyEnableSorting ();
         }
-        /// <summary>Gets or sets whether grouped data auto-expands.</summary>
+
+        /// <summary>Gets or sets whether grouped data auto-expands. Stub retained for compatibility.</summary>
         public bool AutoExpandGroups { get => MasterTemplate.AutoExpandGroups; set => MasterTemplate.AutoExpandGroups = value; }
-        /// <summary>Gets or sets whether the group panel is shown. Stub.</summary>
-        public bool ShowGroupPanel { get; set; }
-        /// <summary>Gets or sets whether grouping is enabled. Stub.</summary>
-        public bool EnableGrouping { get; set; }
+
+        private bool _showGroupPanel;
+        /// <summary>Gets or sets whether the group panel (drag a column header here to group) is shown.</summary>
+        public bool ShowGroupPanel {
+            get => _showGroupPanel;
+            set {
+                if (_showGroupPanel == value)
+                    return;
+                _showGroupPanel = value;
+                RefreshLayout ();
+            }
+        }
+
+        private bool _enableGrouping;
+        /// <summary>Gets or sets whether grouping (group panel, right-click "group by", drag-to-group) is enabled.</summary>
+        public bool EnableGrouping {
+            get => _enableGrouping;
+            set {
+                _enableGrouping = value;
+                if (!value)
+                    ClearGrouping ();
+            }
+        }
+
         /// <summary>Gets or sets whether alternating rows are colored. Stub.</summary>
         public bool EnableAlternatingRowColor { get; set; }
+
+        // ── Descriptors (also surfaced on MasterTemplate) ──
+
+        /// <summary>Gets the sort descriptors. Changing the collection re-sorts the view.</summary>
+        public GridDescriptorCollection<SortDescriptor> SortDescriptors { get; } = new ();
+        /// <summary>Gets the group descriptors. Changing the collection re-groups the view.</summary>
+        public GridDescriptorCollection<GroupDescriptor> GroupDescriptors { get; } = new ();
+        /// <summary>Gets the filter descriptors. Changing the collection re-filters the view.</summary>
+        public GridDescriptorCollection<FilterDescriptor> FilterDescriptors { get; } = new ();
+
+        /// <inheritdoc/>
+        protected override int ContentTopOffset => ShowGroupPanel ? LogicalToDeviceUnits (GroupPanelLogicalHeight) : 0;
+
+        /// <summary>True when the displayed rows differ from the raw master (any filter, sort, or group applied).</summary>
+        internal bool HasViewTransform =>
+            GroupDescriptors.Count > 0 || SortDescriptors.Count > 0 || FilterDescriptors.Any (f => f.IsActive);
+
+        /// <summary>Returns whether the row is an injected group-header row.</summary>
+        internal static bool IsGroupRow (DataGridViewRow row) => row.Tag is GridGroupRow;
+
+        /// <summary>Returns whether the column currently has an active filter (used by the renderer to highlight the funnel).</summary>
+        internal bool ColumnHasActiveFilter (DataGridViewColumn column)
+            => FilterDescriptors.Any (f => f.IsActive && NameMatches (f.PropertyName, column));
+
+        /// <summary>Device-pixel height of the group panel band (0 when hidden). Used by the renderer.</summary>
+        internal int GroupPanelBandHeight => ShowGroupPanel ? LogicalToDeviceUnits (GroupPanelLogicalHeight) : 0;
+
+        // ── Public grouping / filtering API ──
+
+        /// <summary>Groups the grid by the named column (appended as the innermost group level).</summary>
+        public void GroupByColumn (string columnName, ListSortDirection direction = ListSortDirection.Ascending)
+        {
+            if (string.IsNullOrEmpty (columnName) || GroupDescriptors.Any (g => NameMatches (g.PropertyName, columnName)))
+                return;
+
+            GroupDescriptors.Add (new GroupDescriptor (columnName, direction));
+        }
+
+        /// <summary>Removes the grouping for the named column.</summary>
+        public void UngroupColumn (string columnName)
+        {
+            var existing = GroupDescriptors.Find (g => NameMatches (g.PropertyName, columnName));
+            if (existing is not null)
+                GroupDescriptors.Remove (existing);
+        }
+
+        /// <summary>Removes all grouping.</summary>
+        public void ClearGrouping ()
+        {
+            if (GroupDescriptors.Count == 0)
+                return;
+            _collapsed.Clear ();
+            GroupDescriptors.Clear ();
+        }
+
+        /// <summary>Clears the filter for the named column.</summary>
+        public void ClearColumnFilter (string columnName)
+        {
+            var existing = FilterDescriptors.Find (f => NameMatches (f.PropertyName, columnName));
+            if (existing is not null)
+                FilterDescriptors.Remove (existing);
+        }
+
+        /// <summary>Expands every group.</summary>
+        public void ExpandAllGroups ()
+        {
+            if (_collapsed.Count == 0)
+                return;
+            _collapsed.Clear ();
+            RebuildView ();
+        }
+
+        /// <summary>Collapses every group.</summary>
+        public void CollapseAllGroups ()
+        {
+            if (GroupDescriptors.Count == 0)
+                return;
+
+            // Build the full (all-expanded) projection to enumerate every group key, then collapse them.
+            var all = BuildDisplayRows (respectCollapse: false);
+            foreach (var row in all)
+                if (row.Tag is GridGroupRow g)
+                    _collapsed.Add (g.Key);
+
+            RebuildView ();
+        }
 
         /// <summary>Auto-sizes every visible column to fit its header and (formatted) cell content.</summary>
         public void BestFitColumns ()
@@ -140,7 +312,7 @@ namespace Continuum.Forms.Telerik
                 // Check-box columns render a fixed-size glyph, so size to the header only.
                 if (!column.DisplaysAsCheckBox && columnIndex >= 0) {
                     foreach (var row in base.Rows) {
-                        if (columnIndex >= row.Cells.Count)
+                        if (IsGroupRow (row) || columnIndex >= row.Cells.Count)
                             continue;
 
                         var text = ComputeFormattedText (row.Cells[columnIndex], column);
@@ -157,10 +329,598 @@ namespace Continuum.Forms.Telerik
             Invalidate ();
         }
 
-        /// <summary>Begins a batch update. Stub.</summary>
-        public void BeginUpdate () { }
-        /// <summary>Ends a batch update. Stub.</summary>
-        public void EndUpdate () => Invalidate ();
+        /// <summary>Begins a batch update. Suspends view rebuilds until <see cref="EndUpdate"/>.</summary>
+        public void BeginUpdate () => _suspendRebuild = true;
+        /// <summary>Ends a batch update and rebuilds the view.</summary>
+        public void EndUpdate () { _suspendRebuild = false; RebuildView (); Invalidate (); }
+
+        // ── View pipeline ──────────────────────────────────────────────────────
+
+        /// <inheritdoc/>
+        internal override void OnRowsChanged ()
+        {
+            base.OnRowsChanged ();
+
+            // _master is null only if a base-ctor row change races our field initializers.
+            if (_applyingView || _master is null)
+                return;
+
+            // The user (or data binding) mutated base.Rows. Recapture the master data rows and re-flow.
+            SyncMasterFromDisplay ();
+
+            if (HasViewTransform)
+                RebuildView ();
+        }
+
+        // Captures the current non-group display rows as the new master set.
+        private void SyncMasterFromDisplay ()
+        {
+            _master.Clear ();
+            foreach (var row in base.Rows)
+                if (!IsGroupRow (row))
+                    _master.Add (row);
+        }
+
+        // Rebuilds base.Rows from the master set by applying filters, sorting and grouping.
+        internal void RebuildView ()
+        {
+            if (_suspendRebuild || _master is null)
+                return;
+
+            var display = HasViewTransform ? BuildDisplayRows (respectCollapse: true) : new List<DataGridViewRow> (_master);
+
+            _applyingView = true;
+            try {
+                base.Rows.ReplaceAll (display);
+            } finally {
+                _applyingView = false;
+            }
+        }
+
+        // Produces the displayed row list: filtered, sorted, with group-header rows interleaved.
+        private List<DataGridViewRow> BuildDisplayRows (bool respectCollapse)
+        {
+            IEnumerable<DataGridViewRow> rows = _master;
+
+            // Filter
+            var activeFilters = FilterDescriptors.Where (f => f.IsActive).ToList ();
+            if (activeFilters.Count > 0)
+                rows = rows.Where (r => PassesFilters (r, activeFilters));
+
+            var list = rows.ToList ();
+
+            // Sort (group keys first so groups are contiguous, then explicit sort descriptors). Stable.
+            if (GroupDescriptors.Count > 0 || SortDescriptors.Count > 0)
+                list = StableSort (list);
+
+            if (GroupDescriptors.Count == 0)
+                return list;
+
+            var result = new List<DataGridViewRow> ();
+            BuildGroupLevel (list, 0, string.Empty, respectCollapse, result);
+            return result;
+        }
+
+        private bool PassesFilters (DataGridViewRow row, List<FilterDescriptor> filters)
+        {
+            foreach (var filter in filters) {
+                var idx = ColumnIndexByName (filter.PropertyName);
+                if (idx < 0)
+                    continue;
+                if (!filter.Matches (GetCellDisplay (row, idx)))
+                    return false;
+            }
+            return true;
+        }
+
+        private List<DataGridViewRow> StableSort (List<DataGridViewRow> rows)
+        {
+            var indexed = rows.Select ((r, i) => (r, i)).ToList ();
+            indexed.Sort ((a, b) => {
+                var cmp = CompareRows (a.r, b.r);
+                return cmp != 0 ? cmp : a.i.CompareTo (b.i);
+            });
+            return indexed.Select (t => t.r).ToList ();
+        }
+
+        private int CompareRows (DataGridViewRow a, DataGridViewRow b)
+        {
+            foreach (var g in GroupDescriptors) {
+                var idx = ColumnIndexByName (g.PropertyName);
+                if (idx < 0)
+                    continue;
+                var cmp = FilterDescriptor.Compare (GetCellDisplay (a, idx), GetCellDisplay (b, idx));
+                if (g.Direction == ListSortDirection.Descending)
+                    cmp = -cmp;
+                if (cmp != 0)
+                    return cmp;
+            }
+
+            foreach (var s in SortDescriptors) {
+                var idx = ColumnIndexByName (s.PropertyName);
+                if (idx < 0)
+                    continue;
+                var cmp = FilterDescriptor.Compare (GetCellDisplay (a, idx), GetCellDisplay (b, idx));
+                if (s.Direction == ListSortDirection.Descending)
+                    cmp = -cmp;
+                if (cmp != 0)
+                    return cmp;
+            }
+
+            return 0;
+        }
+
+        // Recursively emits group-header rows and (when expanded) their children.
+        private void BuildGroupLevel (List<DataGridViewRow> rows, int level, string parentKey, bool respectCollapse, List<DataGridViewRow> result)
+        {
+            if (level >= GroupDescriptors.Count) {
+                result.AddRange (rows);
+                return;
+            }
+
+            var descriptor = GroupDescriptors[level];
+            var colIndex = ColumnIndexByName (descriptor.PropertyName);
+            var header = ColumnHeaderByName (descriptor.PropertyName);
+
+            // rows are pre-sorted by the group keys, so equal values are contiguous.
+            var i = 0;
+            while (i < rows.Count) {
+                var value = GetCellDisplay (rows[i], colIndex);
+                var members = new List<DataGridViewRow> ();
+
+                while (i < rows.Count && string.Equals (GetCellDisplay (rows[i], colIndex), value, StringComparison.CurrentCultureIgnoreCase)) {
+                    members.Add (rows[i]);
+                    i++;
+                }
+
+                var key = BuildGroupKey (parentKey, level, value);
+                var collapsed = respectCollapse && _collapsed.Contains (key);
+
+                var groupRow = new DataGridViewRow {
+                    Tag = new GridGroupRow {
+                        Field = descriptor.PropertyName,
+                        HeaderText = header,
+                        Value = value,
+                        Count = members.Count,
+                        Level = level,
+                        Key = key,
+                        Collapsed = collapsed
+                    }
+                };
+                result.Add (groupRow);
+
+                if (!collapsed)
+                    BuildGroupLevel (members, level + 1, key, respectCollapse, result);
+            }
+        }
+
+        private static string BuildGroupKey (string parentKey, int level, string value)
+            => $"{parentKey}/{level}:{value}";
+
+        // ── Name / value helpers ──
+
+        internal int ColumnIndexByName (string name)
+        {
+            for (var i = 0; i < base.Columns.Count; i++)
+                if (NameMatches (name, base.Columns[i]))
+                    return i;
+            return -1;
+        }
+
+        private DataGridViewColumn? ColumnByName (string name)
+        {
+            var idx = ColumnIndexByName (name);
+            return idx >= 0 ? base.Columns[idx] : null;
+        }
+
+        private string ColumnHeaderByName (string name)
+        {
+            var col = ColumnByName (name);
+            return col is null ? name : (string.IsNullOrEmpty (col.HeaderText) ? col.Name : col.HeaderText);
+        }
+
+        private static bool NameMatches (string name, DataGridViewColumn column)
+            => string.Equals (column.Name, name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals (column.DataPropertyName, name, StringComparison.OrdinalIgnoreCase)
+            || string.Equals (column.HeaderText, name, StringComparison.OrdinalIgnoreCase);
+
+        private static bool NameMatches (string a, string b) => string.Equals (a, b, StringComparison.OrdinalIgnoreCase);
+
+        // The display text used for filtering/sorting/grouping (combo FK→name, format strings applied).
+        internal string GetCellDisplay (DataGridViewRow row, int columnIndex)
+        {
+            if (columnIndex < 0 || columnIndex >= row.Cells.Count)
+                return string.Empty;
+            var column = columnIndex < base.Columns.Count ? base.Columns[columnIndex] : null;
+            return ComputeFormattedText (row.Cells[columnIndex], column);
+        }
+
+        // Distinct display values for a column (used to populate the filter popup checklist).
+        internal List<string> DistinctValues (int columnIndex)
+            => _master.Select (r => GetCellDisplay (r, columnIndex))
+                      .Distinct (StringComparer.CurrentCultureIgnoreCase)
+                      .OrderBy (v => v, StringComparer.CurrentCultureIgnoreCase)
+                      .ToList ();
+
+        private void RefreshLayout ()
+        {
+            // ContentTopOffset / column set changed: recompute scroll metrics and repaint.
+            OnColumnsChanged ();
+            RebuildView ();
+            Invalidate ();
+        }
+
+        // ── Sorting ──
+
+        private void ToggleSort (int columnIndex)
+        {
+            if (columnIndex < 0 || columnIndex >= base.Columns.Count)
+                return;
+
+            var column = base.Columns[columnIndex];
+            if (!EnableSorting || !column.Sortable)
+                return;
+
+            var name = !string.IsNullOrEmpty (column.Name) ? column.Name : column.HeaderText;
+            var existing = SortDescriptors.Find (s => NameMatches (s.PropertyName, column));
+
+            _suspendRebuild = true;
+            SortDescriptors.Clear ();   // single-column sort
+
+            if (existing is null)
+                SortDescriptors.Add (new SortDescriptor (name, ListSortDirection.Ascending));
+            else if (existing.Direction == ListSortDirection.Ascending)
+                SortDescriptors.Add (new SortDescriptor (name, ListSortDirection.Descending));
+            // else: was descending → leave cleared (unsorted)
+
+            _suspendRebuild = false;
+            SyncSortGlyphs ();
+            RebuildView ();
+        }
+
+        // Keeps each column's SortOrder (drawn as the header glyph) in step with the sort descriptors.
+        private void SyncSortGlyphs ()
+        {
+            foreach (DataGridViewColumn column in base.Columns)
+                column.SortOrder = SortOrder.None;
+
+            foreach (var s in SortDescriptors) {
+                var col = ColumnByName (s.PropertyName);
+                if (col is not null)
+                    col.SortOrder = s.Direction == ListSortDirection.Ascending ? SortOrder.Ascending : SortOrder.Descending;
+            }
+        }
+
+        // ── Column reorder ──
+
+        private void MoveColumn (int from, int to)
+        {
+            if (from == to || from < 0 || to < 0 || from >= base.Columns.Count || to >= base.Columns.Count)
+                return;
+
+            var column = base.Columns[from];
+
+            _suspendRebuild = true;
+            _applyingView = true;   // suppress master resync while we shuffle cells
+            try {
+                base.Columns.RemoveAt (from);
+                var target = to > from ? to - 1 : to;
+                base.Columns.Insert (target, column);
+
+                foreach (var row in _master) {
+                    if (from >= row.Cells.Count)
+                        continue;
+                    var cell = row.Cells[from];
+                    row.Cells.RemoveAt (from);
+                    row.Cells.Insert (Math.Min (target, row.Cells.Count), cell);
+                }
+            } finally {
+                _applyingView = false;
+                _suspendRebuild = false;
+            }
+
+            RebuildView ();
+            Invalidate ();
+        }
+
+        // ── Mouse interaction ──
+
+        private const int DragThreshold = 4;
+
+        /// <inheritdoc/>
+        protected override void OnMouseDown (MouseEventArgs e)
+        {
+            if (Enabled && e.Button == MouseButtons.Left) {
+                var content = GetContentArea ();
+
+                // 1) Group panel band (above the header).
+                if (ShowGroupPanel && e.Location.Y < content.Top) {
+                    HandleGroupPanelMouseDown (e.Location);
+                    return;
+                }
+
+                // 2) Column header row.
+                if (ColumnHeadersVisible) {
+                    var headerRect = new Rectangle (content.Left, content.Top, content.Width, ScaledHeaderHeight);
+
+                    if (headerRect.Contains (e.Location)) {
+                        // Resize zones still belong to the base grid.
+                        if (AllowUserToResizeColumns && NearColumnEdge (e.Location)) {
+                            base.OnMouseDown (e);
+                            return;
+                        }
+
+                        var col = GetColumnAtLocation (e.Location);
+                        if (col >= 0) {
+                            if (EnableFiltering && FilterGlyphRects.TryGetValue (col, out var glyph) && glyph.Contains (e.Location)) {
+                                ShowFilterPopup (col);
+                                return;
+                            }
+
+                            // Defer: a plain click sorts on mouse-up; a drag groups/reorders.
+                            _headerDragColumn = col;
+                            _dragStart = e.Location;
+                            DragActive = false;
+                        }
+                        return;
+                    }
+                }
+
+                // 3) Group-header row → toggle expand/collapse.
+                var rowIndex = GetRowAtLocation (e.Location);
+                if (rowIndex >= 0 && rowIndex < base.Rows.Count && IsGroupRow (base.Rows[rowIndex])) {
+                    ToggleGroupRow (base.Rows[rowIndex]);
+                    return;
+                }
+            }
+
+            base.OnMouseDown (e);
+        }
+
+        /// <inheritdoc/>
+        protected override void OnMouseMove (MouseEventArgs e)
+        {
+            if (_headerDragColumn >= 0 && e.Button == MouseButtons.Left) {
+                if (!DragActive && (Math.Abs (e.Location.X - _dragStart.X) > LogicalToDeviceUnits (DragThreshold)
+                                 || Math.Abs (e.Location.Y - _dragStart.Y) > LogicalToDeviceUnits (DragThreshold)))
+                    DragActive = true;
+
+                if (DragActive) {
+                    DragLocation = e.Location;
+                    var content = GetContentArea ();
+                    DragOverGroupPanel = ShowGroupPanel && EnableGrouping && e.Location.Y < content.Top;
+                    DragTargetColumn = DragOverGroupPanel ? -1 : GetColumnAtLocation (e.Location);
+                    Invalidate ();
+                    return;
+                }
+            }
+
+            base.OnMouseMove (e);
+        }
+
+        /// <inheritdoc/>
+        protected override void OnMouseUp (MouseEventArgs e)
+        {
+            if (_headerDragColumn >= 0) {
+                var col = _headerDragColumn;
+                _headerDragColumn = -1;
+
+                if (DragActive) {
+                    DragActive = false;
+
+                    if (DragOverGroupPanel) {
+                        var column = col < base.Columns.Count ? base.Columns[col] : null;
+                        if (column is not null)
+                            GroupByColumn (!string.IsNullOrEmpty (column.Name) ? column.Name : column.HeaderText);
+                    } else if (AllowColumnReorder && DragTargetColumn >= 0 && DragTargetColumn != col) {
+                        MoveColumn (col, DragTargetColumn);
+                    }
+
+                    DragTargetColumn = -1;
+                    DragOverGroupPanel = false;
+                    Invalidate ();
+                } else {
+                    ToggleSort (col);   // plain header click
+                }
+                return;
+            }
+
+            base.OnMouseUp (e);
+        }
+
+        // True when the point is within a few pixels of a visible column's right edge (resize handle).
+        private bool NearColumnEdge (Point location)
+        {
+            var zone = LogicalToDeviceUnits (4);
+            foreach (DataGridViewColumn column in base.Columns) {
+                if (!column.Visible || column.HeaderBounds.IsEmpty)
+                    continue;
+                if (Math.Abs (location.X - column.HeaderBounds.Right) <= zone)
+                    return true;
+            }
+            return false;
+        }
+
+        private void ToggleGroupRow (DataGridViewRow row)
+        {
+            if (row.Tag is not GridGroupRow info)
+                return;
+
+            if (!_collapsed.Remove (info.Key))
+                _collapsed.Add (info.Key);
+
+            RebuildView ();
+        }
+
+        private void HandleGroupPanelMouseDown (Point location)
+        {
+            foreach (var pill in GroupPillLayouts) {
+                if (pill.CloseBounds.Contains (location)) {
+                    UngroupColumn (pill.Descriptor.PropertyName);
+                    return;
+                }
+                if (pill.Bounds.Contains (location)) {
+                    // Toggle this group's direction.
+                    pill.Descriptor.Direction = pill.Descriptor.Direction == ListSortDirection.Ascending
+                        ? ListSortDirection.Descending : ListSortDirection.Ascending;
+                    RebuildView ();
+                    return;
+                }
+            }
+        }
+
+        private void ShowFilterPopup (int columnIndex)
+        {
+            if (columnIndex < 0 || columnIndex >= base.Columns.Count)
+                return;
+
+            var column = base.Columns[columnIndex];
+            var name = !string.IsNullOrEmpty (column.Name) ? column.Name : column.HeaderText;
+            var current = FilterDescriptors.Find (f => NameMatches (f.PropertyName, column));
+
+            // Anchor under the funnel glyph (fall back to the header's bottom-left).
+            var anchor = FilterGlyphRects.TryGetValue (columnIndex, out var glyph)
+                ? new Point (glyph.Left, column.HeaderBounds.Bottom)
+                : new Point (column.HeaderBounds.Left, column.HeaderBounds.Bottom);
+
+            RadGridFilterPopup.Show (this, name, DistinctValues (columnIndex), current,
+                PointToScreen (anchor), descriptor => {
+                    if (current is not null)
+                        FilterDescriptors.Remove (current);
+                    if (descriptor is not null) {
+                        descriptor.PropertyName = name;
+                        FilterDescriptors.Add (descriptor);
+                    } else {
+                        RebuildView ();
+                    }
+                    Invalidate ();
+                });
+        }
+
+        // ── Layout persistence (Telerik-shaped XML) ──
+
+        /// <summary>Serializes the column layout, sort/group/filter descriptors to a Telerik-shaped XML string.</summary>
+        public string SaveLayoutToString ()
+        {
+            var doc = new XElement ("RadGridView",
+                new XElement ("Columns",
+                    base.Columns.Select ((c, i) => new XElement ("Column",
+                        new XAttribute ("Name", c.Name ?? string.Empty),
+                        new XAttribute ("HeaderText", c.HeaderText ?? string.Empty),
+                        new XAttribute ("Width", c.Width),
+                        new XAttribute ("Index", i),
+                        new XAttribute ("IsVisible", c.Visible),
+                        new XAttribute ("SortOrder", c.SortOrder)))),
+                new XElement ("SortDescriptors",
+                    SortDescriptors.Select (s => new XElement ("SortDescriptor",
+                        new XAttribute ("PropertyName", s.PropertyName),
+                        new XAttribute ("Direction", s.Direction)))),
+                new XElement ("GroupDescriptors",
+                    GroupDescriptors.Select (g => new XElement ("GroupDescriptor",
+                        new XAttribute ("PropertyName", g.PropertyName),
+                        new XAttribute ("Direction", g.Direction)))),
+                new XElement ("FilterDescriptors",
+                    FilterDescriptors.Select (f => new XElement ("FilterDescriptor",
+                        new XAttribute ("PropertyName", f.PropertyName),
+                        new XAttribute ("Operator", f.Operator),
+                        new XAttribute ("Value", f.Value?.ToString () ?? string.Empty),
+                        f.SelectedValues is null ? null : new XElement ("SelectedValues",
+                            f.SelectedValues.Select (v => new XElement ("Value", v)))))));
+
+            return new XDocument (doc).ToString ();
+        }
+
+        /// <summary>Saves the layout (see <see cref="SaveLayoutToString"/>) to the specified file.</summary>
+        public void SaveLayout (string fileName) => File.WriteAllText (fileName, SaveLayoutToString ());
+
+        /// <summary>Loads layout XML previously produced by <see cref="SaveLayoutToString"/>.</summary>
+        public void LoadLayoutFromString (string xml)
+        {
+            if (string.IsNullOrWhiteSpace (xml))
+                return;
+
+            XElement root;
+            try {
+                root = XDocument.Parse (xml).Root!;
+            } catch {
+                return;
+            }
+            if (root is null)
+                return;
+
+            _suspendRebuild = true;
+            try {
+                // Columns: width / visibility / order.
+                var cols = root.Element ("Columns")?.Elements ("Column").ToList () ?? new List<XElement> ();
+                foreach (var ce in cols) {
+                    var col = ColumnByName ((string?)ce.Attribute ("Name") ?? string.Empty);
+                    if (col is null)
+                        continue;
+                    if (int.TryParse ((string?)ce.Attribute ("Width"), out var w))
+                        col.Width = w;
+                    if (bool.TryParse ((string?)ce.Attribute ("IsVisible"), out var vis))
+                        col.Visible = vis;
+                }
+
+                // Re-order columns to match the saved Index order.
+                var order = cols.OrderBy (ce => (int?)ce.Attribute ("Index") ?? 0)
+                                .Select (ce => (string?)ce.Attribute ("Name") ?? string.Empty)
+                                .ToList ();
+                ApplyColumnOrder (order);
+
+                // Descriptors.
+                SortDescriptors.Clear ();
+                foreach (var se in root.Element ("SortDescriptors")?.Elements ("SortDescriptor") ?? Enumerable.Empty<XElement> ())
+                    SortDescriptors.Add (new SortDescriptor (
+                        (string?)se.Attribute ("PropertyName") ?? string.Empty,
+                        ParseDirection ((string?)se.Attribute ("Direction"))));
+
+                GroupDescriptors.Clear ();
+                foreach (var ge in root.Element ("GroupDescriptors")?.Elements ("GroupDescriptor") ?? Enumerable.Empty<XElement> ())
+                    GroupDescriptors.Add (new GroupDescriptor (
+                        (string?)ge.Attribute ("PropertyName") ?? string.Empty,
+                        ParseDirection ((string?)ge.Attribute ("Direction"))));
+
+                FilterDescriptors.Clear ();
+                foreach (var fe in root.Element ("FilterDescriptors")?.Elements ("FilterDescriptor") ?? Enumerable.Empty<XElement> ()) {
+                    var descriptor = new FilterDescriptor {
+                        PropertyName = (string?)fe.Attribute ("PropertyName") ?? string.Empty,
+                        Operator = Enum.TryParse<FilterOperator> ((string?)fe.Attribute ("Operator"), out var op) ? op : FilterOperator.None,
+                        Value = (string?)fe.Attribute ("Value")
+                    };
+                    var values = fe.Element ("SelectedValues");
+                    if (values is not null)
+                        descriptor.SelectedValues = new HashSet<string> (
+                            values.Elements ("Value").Select (v => v.Value), StringComparer.CurrentCultureIgnoreCase);
+                    FilterDescriptors.Add (descriptor);
+                }
+            } finally {
+                _suspendRebuild = false;
+            }
+
+            SyncSortGlyphs ();
+            RefreshLayout ();
+        }
+
+        /// <summary>Loads layout XML from the specified file.</summary>
+        public void LoadLayout (string fileName)
+        {
+            if (File.Exists (fileName))
+                LoadLayoutFromString (File.ReadAllText (fileName));
+        }
+
+        private static ListSortDirection ParseDirection (string? value)
+            => string.Equals (value, "Descending", StringComparison.OrdinalIgnoreCase)
+                ? ListSortDirection.Descending : ListSortDirection.Ascending;
+
+        private void ApplyColumnOrder (List<string> namesInOrder)
+        {
+            for (var desired = 0; desired < namesInOrder.Count; desired++) {
+                var current = ColumnIndexByName (namesInOrder[desired]);
+                if (current >= 0 && current != desired)
+                    MoveColumn (current, desired);
+            }
+        }
 
         // ── Events (forwarded from the base grid; see ctor) ──
 
@@ -207,20 +967,32 @@ namespace Continuum.Forms.Telerik
         /// <inheritdoc/>
         protected override void OnClick (MouseEventArgs e)
         {
-            // Telerik raises ContextMenuOpening on right-click so handlers can build the menu; show it.
-            if (e.Button == MouseButtons.Right && _contextMenuOpening is not null) {
-                var args = new ContextMenuOpeningEventArgs { RowElement = RowElementUnder (e.Location) };
-                _contextMenuOpening.Invoke (this, args);
+            if (e.Button == MouseButtons.Right) {
+                var content = GetContentArea ();
+                var onHeader = ColumnHeadersVisible
+                    && new Rectangle (content.Left, content.Top, content.Width, ScaledHeaderHeight).Contains (e.Location);
 
-                if (args.ContextMenu.Items.Count > 0) {
-                    var menu = new ContextMenu ();
-                    foreach (var item in args.ContextMenu.Items)
-                        if (item is MenuItem menuItem)
-                            menu.Items.Add (menuItem);
+                // Built-in header menu (group / sort / filter / best-fit), unless the consumer drives the menu.
+                if (onHeader && _contextMenuOpening is null) {
+                    ShowHeaderContextMenu (GetColumnAtLocation (e.Location), e.Location);
+                    return;
+                }
 
-                    if (menu.Items.Count > 0) {
-                        menu.Show (this, PointToScreen (e.Location));
-                        return;
+                // Telerik raises ContextMenuOpening on right-click so handlers can build the menu; show it.
+                if (_contextMenuOpening is not null) {
+                    var args = new ContextMenuOpeningEventArgs { RowElement = RowElementUnder (e.Location) };
+                    _contextMenuOpening.Invoke (this, args);
+
+                    if (args.ContextMenu.Items.Count > 0) {
+                        var menu = new ContextMenu ();
+                        foreach (var item in args.ContextMenu.Items)
+                            if (item is MenuItem menuItem)
+                                menu.Items.Add (menuItem);
+
+                        if (menu.Items.Count > 0) {
+                            menu.Show (this, PointToScreen (e.Location));
+                            return;
+                        }
                     }
                 }
             }
@@ -228,20 +1000,85 @@ namespace Continuum.Forms.Telerik
             base.OnClick (e);
         }
 
+        private void ShowHeaderContextMenu (int columnIndex, Point location)
+        {
+            if (columnIndex < 0 || columnIndex >= base.Columns.Count)
+                return;
+
+            var column = base.Columns[columnIndex];
+            var name = !string.IsNullOrEmpty (column.Name) ? column.Name : column.HeaderText;
+            var menu = new ContextMenu ();
+
+            if (EnableSorting && column.Sortable) {
+                menu.Items.Add (new MenuItem ("Sort Ascending", (SKBitmap?)null, (_, _) => SetSort (name, ListSortDirection.Ascending)));
+                menu.Items.Add (new MenuItem ("Sort Descending", (SKBitmap?)null, (_, _) => SetSort (name, ListSortDirection.Descending)));
+                menu.Items.Add (new MenuItem ("Clear Sorting", (SKBitmap?)null, (_, _) => { SortDescriptors.Clear (); SyncSortGlyphs (); }));
+            }
+
+            if (EnableGrouping) {
+                var isGrouped = GroupDescriptors.Any (g => NameMatches (g.PropertyName, name));
+                menu.Items.Add (new MenuItem (isGrouped ? "Ungroup This Column" : "Group By This Column", (SKBitmap?)null,
+                    (_, _) => { if (isGrouped) UngroupColumn (name); else GroupByColumn (name); }));
+                if (GroupDescriptors.Count > 0)
+                    menu.Items.Add (new MenuItem ("Clear Grouping", (SKBitmap?)null, (_, _) => ClearGrouping ()));
+            }
+
+            if (EnableFiltering) {
+                menu.Items.Add (new MenuItem ("Filter…", (SKBitmap?)null, (_, _) => ShowFilterPopup (columnIndex)));
+                if (FilterDescriptors.Any (f => NameMatches (f.PropertyName, name)))
+                    menu.Items.Add (new MenuItem ("Clear Filter", (SKBitmap?)null, (_, _) => ClearColumnFilter (name)));
+            }
+
+            menu.Items.Add (new MenuItem ("Best Fit Columns", (SKBitmap?)null, (_, _) => BestFitColumns ()));
+
+            if (menu.Items.Count > 0)
+                menu.Show (this, PointToScreen (location));
+        }
+
+        private void SetSort (string name, ListSortDirection direction)
+        {
+            _suspendRebuild = true;
+            SortDescriptors.Clear ();
+            SortDescriptors.Add (new SortDescriptor (name, direction));
+            _suspendRebuild = false;
+            SyncSortGlyphs ();
+            RebuildView ();
+        }
+
         // Best-effort hit-test: returns a row element for the row whose cell contains the point, or null.
         private GridViewRowElement? RowElementUnder (Point location)
         {
-            foreach (var row in base.Rows)
+            foreach (var row in base.Rows) {
+                if (IsGroupRow (row))
+                    continue;
                 foreach (DataGridViewCell cell in row.Cells)
                     if (cell.Bounds.Contains (location))
                         return new GridViewRowElement { RowInfo = new GridViewRowInfo (row) };
+            }
 
             return null;
         }
 
         /// <inheritdoc/>
+        protected override void OnDoubleClick (MouseEventArgs e)
+        {
+            // Don't begin editing on a group-header row; toggle it instead.
+            var rowIndex = GetRowAtLocation (e.Location);
+            if (rowIndex >= 0 && rowIndex < base.Rows.Count && IsGroupRow (base.Rows[rowIndex])) {
+                ToggleGroupRow (base.Rows[rowIndex]);
+                return;
+            }
+
+            base.OnDoubleClick (e);
+        }
+
+        /// <inheritdoc/>
         protected internal override void RaiseRowFormatting (DataGridViewRow row, int rowIndex)
         {
+            // Group-header rows are drawn by the renderer; skip user formatting (they have no data cells).
+            if (IsGroupRow (row))
+                return;
+
             // Clear the per-cell colors and text overrides we manage so conditional formatting doesn't
             // leave stale values from a previous frame; alternating-row striping (drawn at row level)
             // still shows through.
@@ -273,7 +1110,7 @@ namespace Continuum.Forms.Telerik
         /// <inheritdoc/>
         protected internal override void RaiseCellFormatting (DataGridViewRow row, int rowIndex, int columnIndex)
         {
-            if (columnIndex < 0 || columnIndex >= row.Cells.Count)
+            if (IsGroupRow (row) || columnIndex < 0 || columnIndex >= row.Cells.Count)
                 return;
 
             var cell = row.Cells[columnIndex];
@@ -357,14 +1194,35 @@ namespace Continuum.Forms.Telerik
             };
         }
 
-        // Wraps the base row at the given index, or null if out of range.
+        // Wraps the base row at the given index, or null if out of range / a group row.
         private GridViewRowInfo? RowAt (int rowIndex)
-            => rowIndex >= 0 && rowIndex < base.Rows.Count ? new GridViewRowInfo (base.Rows[rowIndex]) : null;
+            => rowIndex >= 0 && rowIndex < base.Rows.Count && !IsGroupRow (base.Rows[rowIndex])
+                ? new GridViewRowInfo (base.Rows[rowIndex]) : null;
+    }
+
+    /// <summary>Describes an injected group-header row (stored on <see cref="DataGridViewRow.Tag"/>).</summary>
+    internal sealed class GridGroupRow
+    {
+        public string Field = string.Empty;
+        public string HeaderText = string.Empty;
+        public string Value = string.Empty;
+        public int Count;
+        public int Level;
+        public string Key = string.Empty;
+        public bool Collapsed;
+    }
+
+    /// <summary>Layout of a single group-panel "pill", published by the renderer for hit-testing.</summary>
+    internal sealed class GroupPillLayout
+    {
+        public GroupDescriptor Descriptor = null!;
+        public Rectangle Bounds;
+        public Rectangle CloseBounds;
     }
 
     /// <summary>
-    /// Telerik-compat grid configuration façade. In Telerik this drives columns/rows/grouping; here
-    /// the column/data members forward to the owning <see cref="RadGridView"/> and the rest are stubs.
+    /// Telerik-compat grid configuration façade. The column/data members forward to the owning
+    /// <see cref="RadGridView"/>; the descriptor collections are the grid's own.
     /// </summary>
     public class GridViewTemplate
     {
@@ -391,7 +1249,7 @@ namespace Continuum.Forms.Telerik
         /// <summary>Gets or sets whether sorting is enabled.</summary>
         public bool EnableSorting { get; set; } = true;
         /// <summary>Gets or sets whether grouped data auto-expands.</summary>
-        public bool AutoExpandGroups { get; set; }
+        public bool AutoExpandGroups { get; set; } = true;
         /// <summary>Gets or sets whether multiple rows can be selected.</summary>
         public bool MultiSelect { get; set; }
         /// <summary>Gets or sets whether the grid is read-only.</summary>
@@ -402,23 +1260,25 @@ namespace Continuum.Forms.Telerik
         public bool EnablePaging { get; set; }
         /// <summary>Gets or sets the page size.</summary>
         public int PageSize { get; set; }
-        /// <summary>Gets the sort descriptors. Stub list.</summary>
-        public List<object> SortDescriptors { get; } = new ();
-        /// <summary>Gets the group descriptors. Stub list.</summary>
-        public List<object> GroupDescriptors { get; } = new ();
+        /// <summary>Gets the sort descriptors (the grid's own collection).</summary>
+        public GridDescriptorCollection<SortDescriptor> SortDescriptors => _grid.SortDescriptors;
+        /// <summary>Gets the group descriptors (the grid's own collection).</summary>
+        public GridDescriptorCollection<GroupDescriptor> GroupDescriptors => _grid.GroupDescriptors;
+        /// <summary>Gets the filter descriptors (the grid's own collection).</summary>
+        public GridDescriptorCollection<FilterDescriptor> FilterDescriptors => _grid.FilterDescriptors;
         /// <summary>Gets the summary rows shown at the bottom. Stub list.</summary>
         public List<object> SummaryRowsBottom { get; } = new ();
         /// <summary>Gets the summary rows shown at the top. Stub list.</summary>
         public List<object> SummaryRowsTop { get; } = new ();
 
-        /// <summary>Auto-sizes columns. Stub.</summary>
+        /// <summary>Auto-sizes columns.</summary>
         public void BestFitColumns () => _grid.BestFitColumns ();
         /// <summary>Refreshes the grid.</summary>
         public void Refresh () => _grid.Invalidate ();
-        /// <summary>Expands all groups. Stub.</summary>
-        public void ExpandAllGroups () { }
-        /// <summary>Collapses all groups. Stub.</summary>
-        public void CollapseAllGroups () { }
+        /// <summary>Expands all groups.</summary>
+        public void ExpandAllGroups () => _grid.ExpandAllGroups ();
+        /// <summary>Collapses all groups.</summary>
+        public void CollapseAllGroups () => _grid.CollapseAllGroups ();
     }
 
     /// <summary>Telerik-compat view definition. Assignable to <see cref="GridViewTemplate.ViewDefinition"/> as a no-op.</summary>
@@ -471,6 +1331,8 @@ namespace Continuum.Forms.Telerik
             get => Sortable;
             set => Sortable = value;
         }
+        /// <summary>Gets or sets whether this column can be grouped. Stub.</summary>
+        public bool AllowGroup { get; set; } = true;
         /// <summary>Gets or sets the column data type. Stub.</summary>
         public Type? DataType { get; set; }
         /// <summary>Gets the conditional-formatting object list. Stub.</summary>
@@ -623,8 +1485,8 @@ namespace Continuum.Forms.Telerik
 
     /// <summary>
     /// Telerik-compat row collection over the underlying <see cref="DataGridViewRowCollection"/>.
-    /// The indexer and enumerator yield <see cref="GridViewRowInfo"/>, while Count/Add/Clear/Remove
-    /// forward to the real grid rows.
+    /// The indexer and enumerator yield <see cref="GridViewRowInfo"/> for data rows only (injected
+    /// group-header rows are skipped), while Count/Add/Clear/Remove operate on the real grid rows.
     /// </summary>
     public class GridViewRowInfoCollection : IEnumerable<GridViewRowInfo>
     {
@@ -632,11 +1494,22 @@ namespace Continuum.Forms.Telerik
 
         internal GridViewRowInfoCollection (DataGridViewRowCollection rows) => _rows = rows;
 
-        /// <summary>Gets the number of rows.</summary>
-        public int Count => _rows.Count;
+        // Underlying data rows (group-header rows excluded), in display order.
+        private List<DataGridViewRow> DataRows {
+            get {
+                var list = new List<DataGridViewRow> ();
+                foreach (var row in _rows)
+                    if (!RadGridView.IsGroupRow (row))
+                        list.Add (row);
+                return list;
+            }
+        }
 
-        /// <summary>Gets the row at the specified index as a <see cref="GridViewRowInfo"/>.</summary>
-        public GridViewRowInfo this[int index] => new GridViewRowInfo (_rows[index]);
+        /// <summary>Gets the number of data rows.</summary>
+        public int Count => DataRows.Count;
+
+        /// <summary>Gets the data row at the specified index as a <see cref="GridViewRowInfo"/>.</summary>
+        public GridViewRowInfo this[int index] => new GridViewRowInfo (DataRows[index]);
 
         /// <summary>Adds a row with the specified cell values.</summary>
         public void Add (params object[] values) => _rows.Add (values);
@@ -647,8 +1520,8 @@ namespace Continuum.Forms.Telerik
         /// <summary>Removes the specified row.</summary>
         public void Remove (GridViewRowInfo row) => _rows.Remove (row.DataRow);
 
-        /// <summary>Removes the row at the specified index.</summary>
-        public void RemoveAt (int index) => _rows.RemoveAt (index);
+        /// <summary>Removes the data row at the specified index.</summary>
+        public void RemoveAt (int index) => _rows.Remove (DataRows[index]);
 
         /// <summary>Removes all rows.</summary>
         public void Clear () => _rows.Clear ();
@@ -656,7 +1529,7 @@ namespace Continuum.Forms.Telerik
         /// <inheritdoc/>
         public IEnumerator<GridViewRowInfo> GetEnumerator ()
         {
-            foreach (var row in _rows)
+            foreach (var row in DataRows)
                 yield return new GridViewRowInfo (row);
         }
 
@@ -715,8 +1588,33 @@ namespace Continuum.Forms.Telerik
         /// <summary>Gets the cell for the specified column name.</summary>
         public GridViewCellInfo this[string columnName] {
             get {
-                var cell = _row.Cells[columnName] ?? _row.Cells.Add (null);
-                return new GridViewCellInfo (cell);
+                var existing = _row.Cells[columnName];
+                if (existing is not null)
+                    return new GridViewCellInfo (existing);
+
+                // The cell doesn't exist yet. Pad the row with empty cells up to the column's index so
+                // cells stay aligned with columns regardless of the order they're first accessed in.
+                var dgv = _row.DataGridView;
+                var colIndex = -1;
+                if (dgv is not null) {
+                    for (var i = 0; i < dgv.Columns.Count; i++) {
+                        var col = dgv.Columns[i];
+                        if (string.Equals (col.Name, columnName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals (col.DataPropertyName, columnName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals (col.HeaderText, columnName, StringComparison.OrdinalIgnoreCase)) {
+                            colIndex = i;
+                            break;
+                        }
+                    }
+                }
+
+                if (colIndex < 0)
+                    colIndex = _row.Cells.Count;
+
+                while (_row.Cells.Count <= colIndex)
+                    _row.Cells.Add (string.Empty);
+
+                return new GridViewCellInfo (_row.Cells[colIndex]);
             }
         }
 

@@ -666,10 +666,20 @@ namespace Continuum.Forms
         internal Rectangle GetContentArea ()
         {
             var client = ClientRectangle;
+            var top_offset = Math.Max (0, ContentTopOffset);
             var w = client.Width - (vscrollbar.Visible ? (int)Math.Ceiling (vscrollbar.Width * ScaleFactor.Width) : 0);
-            var h = client.Height - (hscrollbar.Visible ? (int)Math.Ceiling (hscrollbar.Height * ScaleFactor.Height) : 0);
-            return new Rectangle (client.Left, client.Top, w, h);
+            var h = client.Height - top_offset - (hscrollbar.Visible ? (int)Math.Ceiling (hscrollbar.Height * ScaleFactor.Height) : 0);
+            return new Rectangle (client.Left, client.Top + top_offset, w, h);
         }
+
+        /// <summary>
+        /// Gets the height, in device pixels, of a band reserved at the top of the control (above the
+        /// column headers) that the grid does not draw into. Subclasses (e.g. the Telerik-compat
+        /// <c>RadGridView</c>) override this to reserve room for a group panel; because every geometry
+        /// helper and the renderer derive from <see cref="GetContentArea"/>, the whole grid shifts down
+        /// consistently and the reserved band is the subclass's to paint and hit-test. Default 0.
+        /// </summary>
+        protected virtual int ContentTopOffset => 0;
 
         /// <summary>
         /// Gets the column index at the specified location.
@@ -1327,7 +1337,7 @@ namespace Continuum.Forms
         /// <summary>
         /// Called when the row collection changes.
         /// </summary>
-        internal void OnRowsChanged ()
+        internal virtual void OnRowsChanged ()
         {
             UpdateScrollBars ();
             Invalidate ();
