@@ -33,8 +33,10 @@ namespace Continuum.Forms.Renderers
         {
             var header_height = control.ScaledHeaderHeight;
             var row_header_offset = control.RowHeadersVisible ? control.ScaledRowHeadersWidth : 0;
-            var x = contentArea.Left + row_header_offset - control.HorizontalScrollOffset;
             var y = contentArea.Top;
+            var left0 = contentArea.Left + row_header_offset;
+            var frozen_width = control.FrozenColumnsWidth;
+            var frozen_edge = left0 + frozen_width;
 
             // Draw header background
             var header_rect = new Rectangle (contentArea.Left, y, contentArea.Width, header_height);
@@ -48,24 +50,35 @@ namespace Continuum.Forms.Renderers
                 e.Canvas.DrawLine (corner_rect.Right - 1, corner_rect.Top, corner_rect.Right - 1, corner_rect.Bottom, Theme.BorderLowColor);
             }
 
-            for (var i = 0; i < control.Columns.Count; i++) {
-                var column = control.Columns[i];
+            // Scrollable headers (clipped right of the frozen band), then frozen headers on top.
+            e.Canvas.Save ();
+            e.Canvas.Clip (new Rectangle (frozen_edge, y, Math.Max (0, contentArea.Right - frozen_edge), header_height));
+            for (var i = 0; i < control.Columns.Count; i++)
+                if (control.Columns[i].Visible && !control.Columns[i].Frozen)
+                    RenderColumnHeaderAt (control, i, y, header_height, e);
+            e.Canvas.Restore ();
 
-                if (!column.Visible)
-                    continue;
-
-                var col_width = control.LogicalToDeviceUnits (column.Width);
-                var cell_rect = new Rectangle (x, y, col_width, header_height);
-
-                column.HeaderBounds = cell_rect;
-
-                RenderColumnHeader (control, column, i, cell_rect, e);
-
-                x += col_width;
+            if (frozen_width > 0) {
+                e.Canvas.Save ();
+                e.Canvas.Clip (new Rectangle (left0, y, frozen_width, header_height));
+                for (var i = 0; i < control.Columns.Count; i++)
+                    if (control.Columns[i].Visible && control.Columns[i].Frozen)
+                        RenderColumnHeaderAt (control, i, y, header_height, e);
+                e.Canvas.Restore ();
             }
 
             // Draw header bottom border
             e.Canvas.DrawLine (contentArea.Left, y + header_height - 1, contentArea.Right, y + header_height - 1, Theme.BorderMidColor);
+        }
+
+        // Renders a single column header at its frozen-aware device position.
+        private void RenderColumnHeaderAt (DataGridView control, int columnIndex, int y, int header_height, PaintEventArgs e)
+        {
+            var column = control.Columns[columnIndex];
+            var col_width = control.LogicalToDeviceUnits (column.Width);
+            var cell_rect = new Rectangle (control.GetColumnDeviceLeft (columnIndex), y, col_width, header_height);
+            column.HeaderBounds = cell_rect;
+            RenderColumnHeader (control, column, columnIndex, cell_rect, e);
         }
 
         /// <summary>
@@ -154,9 +167,9 @@ namespace Continuum.Forms.Renderers
                 bg = Theme.ControlHighlightLowColor;
             else if (control.HoveredRowIndex == rowIndex)
                 bg = Theme.ControlMidColor;
-            else if (rowIndex % 2 == 1 && control.AlternatingRowsDefaultCellStyle.BackgroundColor.HasValue)
+            else if (rowIndex % 2 == 1 && control.AlternatingRowColorsEnabled && control.AlternatingRowsDefaultCellStyle.BackgroundColor.HasValue)
                 bg = control.AlternatingRowsDefaultCellStyle.BackgroundColor.Value;
-            else if (rowIndex % 2 == 1)
+            else if (rowIndex % 2 == 1 && control.AlternatingRowColorsEnabled)
                 bg = AlternatingRowColor ();
             else if (control.DefaultCellStyle.BackgroundColor.HasValue)
                 bg = control.DefaultCellStyle.BackgroundColor.Value;
@@ -174,36 +187,50 @@ namespace Continuum.Forms.Renderers
                 RenderRowHeader (control, row, rowIndex, rh_rect, e);
             }
 
-            // Draw cells
-            var row_header_offset = control.RowHeadersVisible ? control.ScaledRowHeadersWidth : 0;
-            var x = bounds.Left + row_header_offset - control.HorizontalScrollOffset;
+            // Draw cells. Scrollable columns are clipped to the area right of the frozen band; frozen
+            // columns are drawn last (on top) so they stay pinned and never reveal scrolled content.
+            var left0 = bounds.Left + (control.RowHeadersVisible ? control.ScaledRowHeadersWidth : 0);
+            var frozen_width = control.FrozenColumnsWidth;
+            var frozen_edge = left0 + frozen_width;
 
-            for (var i = 0; i < control.Columns.Count; i++) {
-                var column = control.Columns[i];
+            e.Canvas.Save ();
+            e.Canvas.Clip (new Rectangle (frozen_edge, bounds.Top, Math.Max (0, bounds.Right - frozen_edge), bounds.Height));
+            for (var i = 0; i < control.Columns.Count; i++)
+                if (control.Columns[i].Visible && !control.Columns[i].Frozen)
+                    RenderRowCell (control, row, rowIndex, i, bounds, e);
+            e.Canvas.Restore ();
 
-                if (!column.Visible)
-                    continue;
-
-                var col_width = control.LogicalToDeviceUnits (column.Width);
-                var cell_rect = new Rectangle (x, bounds.Top, col_width, bounds.Height);
-
-                if (i < row.Cells.Count)
-                    row.Cells[i].Bounds = cell_rect;
-
-                // Let subclasses apply cell-level formatting (colors + a display-text override) before
-                // the value and style are read for drawing.
-                control.RaiseCellFormatting (row, rowIndex, i);
-
-                var the_cell = i < row.Cells.Count ? row.Cells[i] : null;
-                var cell_value = the_cell?.FormattedTextOverride ?? the_cell?.Value?.ToString () ?? string.Empty;
-                var cell_style = the_cell?.Style;
-                RenderCell (control, column, cell_value, rowIndex, i, cell_rect, cell_style, e);
-
-                x += col_width;
+            if (frozen_width > 0) {
+                e.Canvas.Save ();
+                e.Canvas.Clip (new Rectangle (left0, bounds.Top, frozen_width, bounds.Height));
+                for (var i = 0; i < control.Columns.Count; i++)
+                    if (control.Columns[i].Visible && control.Columns[i].Frozen)
+                        RenderRowCell (control, row, rowIndex, i, bounds, e);
+                e.Canvas.Restore ();
             }
 
             // Draw row bottom border
             e.Canvas.DrawLine (bounds.Left, bounds.Bottom - 1, bounds.Right, bounds.Bottom - 1, Theme.BorderLowColor);
+        }
+
+        // Draws a single data cell at its frozen-aware device position.
+        private void RenderRowCell (DataGridView control, DataGridViewRow row, int rowIndex, int columnIndex, Rectangle bounds, PaintEventArgs e)
+        {
+            var column = control.Columns[columnIndex];
+            var col_width = control.LogicalToDeviceUnits (column.Width);
+            var cell_rect = new Rectangle (control.GetColumnDeviceLeft (columnIndex), bounds.Top, col_width, bounds.Height);
+
+            if (columnIndex < row.Cells.Count)
+                row.Cells[columnIndex].Bounds = cell_rect;
+
+            // Let subclasses apply cell-level formatting (colors + a display-text override) before
+            // the value and style are read for drawing.
+            control.RaiseCellFormatting (row, rowIndex, columnIndex);
+
+            var the_cell = columnIndex < row.Cells.Count ? row.Cells[columnIndex] : null;
+            var cell_value = the_cell?.FormattedTextOverride ?? the_cell?.Value?.ToString () ?? string.Empty;
+            var cell_style = the_cell?.Style;
+            RenderCell (control, column, cell_value, rowIndex, columnIndex, cell_rect, cell_style, e);
         }
 
         /// <summary>
@@ -268,9 +295,16 @@ namespace Continuum.Forms.Renderers
             } else if (column is DataGridViewComboBoxColumn) {
                 RenderComboBoxCell (e, text_bounds, value, font, scaled_font, fg);
             } else {
-                e.Canvas.DrawText (value, font, scaled_font, text_bounds, fg, column.DefaultCellStyleAlignment, maxLines: 1);
+                e.Canvas.DrawText (value, font, scaled_font, text_bounds, fg, column.DefaultCellStyleAlignment, maxLines: CellTextMaxLines (column));
             }
         }
+
+        /// <summary>
+        /// The maximum number of text lines a cell renders. Default 1 (single line). Subclasses override
+        /// to allow wrapping (e.g. the Telerik-compat renderer returns null — unlimited — for a column
+        /// whose <c>WrapText</c> is set, so tall rows show multi-line content).
+        /// </summary>
+        protected virtual int? CellTextMaxLines (DataGridViewColumn column) => 1;
 
         private static void RenderCheckBoxCell (PaintEventArgs e, Rectangle bounds, string value)
         {

@@ -25,12 +25,12 @@ namespace ControlGallery.Panels
         public TelerikGridViewPanel ()
         {
             Controls.Add (new Label {
-                Text = "RadGridView with live filtering, sorting, grouping, drag-to-group, column reorder, and Save/Load layout XML.",
-                Left = 10, Top = 10, Width = 900
+                Text = "RadGridView: filtering, sorting (Shift-click = multi-sort), grouping, group footers, summary row, reorder, frozen Name column, layout XML.",
+                Left = 10, Top = 10, Width = 760
             });
             Controls.Add (new Label {
                 Text = "Drag a header into the gray group panel (or right-click a header). Click the funnel to filter. Drag one header onto another to reorder.",
-                Left = 10, Top = 30, Width = 900
+                Left = 10, Top = 30, Width = 760
             });
 
             // Department lookup table (the combo column stores DeptId but displays DeptName).
@@ -48,7 +48,9 @@ namespace ControlGallery.Panels
                 EnableGrouping = true,
                 EnableFiltering = true,
                 EnableSorting = true,
-                AllowColumnReorder = true
+                AllowColumnReorder = true,
+                AllowColumnChooser = true,
+                EnableAlternatingRowColor = true
             };
 
             grid.MasterTemplate.ViewDefinition = new TableViewDefinition ();
@@ -65,6 +67,10 @@ namespace ControlGallery.Panels
                 TextAlignment = ContentAlignment.MiddleRight, HeaderTextAlignment = ContentAlignment.MiddleRight
             });
             grid.Columns.Add (new GridViewCheckBoxColumn ("Active") { HeaderText = "Active", Width = 70 });
+            grid.Columns.Add (new GridViewDateTimeColumn ("HireDate") { HeaderText = "Hire Date", Width = 110, FormatString = "yyyy-MM-dd" });
+
+            // Pin the Name column: it stays put when the grid is scrolled horizontally.
+            grid.Columns["Name"]!.Frozen = true;
 
             AddRow ("Alice Johnson", 1, "USA", 85000m, true);
             AddRow ("Bob Smith", 2, "Canada", 48000m, true);
@@ -78,6 +84,15 @@ namespace ControlGallery.Panels
             AddRow ("Judy Garland", 4, "USA", 49000m, false);
             AddRow ("Mallory Quinn", 2, "Canada", 53000m, true);
             AddRow ("Niaj Khan", 3, "USA", 67000m, true);
+
+            // Hire dates — double-click a Hire Date cell to pick from the calendar editor (Department uses the combo editor).
+            var hireDates = new[] {
+                new DateTime (2018, 3, 12), new DateTime (2020, 7, 1), new DateTime (2019, 11, 5), new DateTime (2016, 1, 20),
+                new DateTime (2021, 5, 9), new DateTime (2017, 9, 30), new DateTime (2022, 2, 14), new DateTime (2015, 6, 18),
+                new DateTime (2020, 12, 1), new DateTime (2019, 4, 22), new DateTime (2023, 1, 10), new DateTime (2018, 8, 8)
+            };
+            for (var i = 0; i < grid.RowCount; i++)
+                grid.Rows[i].Cells["HireDate"].Value = hireDates[i];
 
             // RowFormatting — highlight rows whose salary is >= 100k.
             grid.RowFormatting += (o, e) => {
@@ -93,10 +108,22 @@ namespace ControlGallery.Panels
                     e.CellElement.ForeColor = Color.FromArgb (200, 0, 0);
             };
 
+            // Summary row — grand totals at the bottom (respects the active filter).
+            grid.SummaryRowsBottom.Add (new GridViewSummaryRowItem (
+                new GridViewSummaryItem ("Name", GridAggregateFunction.Count, "Count: {0}"),
+                new GridViewSummaryItem ("Salary", GridAggregateFunction.Sum, "C0")));
+
+            // Group footers — per-group salary total shown under each group when grouping is active.
+            grid.GroupSummaryItems.Add (new GridViewSummaryItem ("Salary", GridAggregateFunction.Sum, "C0"));
+
             Controls.Add (grid);
 
-            // ── Command buttons ──
+            // ── Search box (quick-filter across all columns) ──
             var x = 780;
+            Controls.Add (new Label { Text = "Search:", Left = x, Top = 14, Width = 55 });
+            var search = new TextBox { Left = x + 58, Top = 10, Width = 172, Height = 26 };
+            search.TextChanged += (_, _) => grid.SearchText = search.Text;
+            Controls.Add (search);
             AddButton ("Group by Dept", x, 56, () => grid.GroupByColumn ("Dept"));
             AddButton ("Group by Country", x, 92, () => grid.GroupByColumn ("Country"));
             AddButton ("Clear Grouping", x, 128, () => grid.ClearGrouping ());
@@ -105,8 +132,10 @@ namespace ControlGallery.Panels
             AddButton ("Filter < 60k", x, 252, () =>
                 grid.FilterDescriptors.Add (new FilterDescriptor ("Salary", FilterOperator.IsLessThan, 60000)));
             AddButton ("Clear Filters", x, 288, () => grid.FilterDescriptors.Clear ());
-            AddButton ("Save Layout", x, 332, SaveLayout);
-            AddButton ("Load Layout", x, 368, LoadLayout);
+            AddButton ("Column Chooser", x, 332, () => grid.ShowColumnChooser ());
+            AddButton ("Save Layout", x, 368, SaveLayout);
+            AddButton ("Load Layout", x, 404, LoadLayout);
+            AddButton ("Export CSV", x, 440, () => xml_box.Text = grid.ExportToCsv ());
 
             Controls.Add (new Label {
                 Text = "Saved layout XML (click \"Save Layout\"):",
@@ -114,7 +143,7 @@ namespace ControlGallery.Panels
             });
 
             xml_box = new TextBox {
-                Left = 10, Top = 426, Width = 1010, Height = 180,
+                Left = 10, Top = 426, Width = 760, Height = 180,
                 Multiline = true, ReadOnly = true
             };
             Controls.Add (xml_box);

@@ -33,6 +33,8 @@ namespace Continuum.Forms.Telerik
         // Guards re-entrancy: true while we (not the user) are rewriting base.Rows.
         private bool _applyingView;
         private bool _suspendRebuild;
+        // Guards re-entrancy while ApplyAutoSizeColumns rewrites column widths.
+        private bool _applyingAutoSize;
         // Group path keys (see BuildGroupKey) that the user has collapsed.
         private readonly HashSet<string> _collapsed = new (StringComparer.Ordinal);
 
@@ -68,6 +70,9 @@ namespace Continuum.Forms.Telerik
             SortDescriptors.Changed = () => { SyncSortGlyphs (); RebuildView (); };
             GroupDescriptors.Changed = () => { RefreshLayout (); RebuildView (); };
             FilterDescriptors.Changed = RebuildView;
+            SummaryRowsTop.Changed = RebuildView;
+            SummaryRowsBottom.Changed = RebuildView;
+            GroupSummaryItems.Changed = RebuildView;
 
             // Forward the real (raised) base events to their Telerik-shaped equivalents so migrated
             // grid handlers actually run. CellClick also drives CommandCellClick (Telerik's button-
@@ -79,6 +84,9 @@ namespace Continuum.Forms.Telerik
                 _commandCellClick?.Invoke (this, args);
             };
             base.CellValueChanged += (_, e) => {
+                // Enforce GridViewDecimalColumn constraints (min/max/decimal places) on the new value.
+                NormalizeDecimalCell (e.ColumnIndex, e.RowIndex);
+
                 var args = BuildCellArgs (e.ColumnIndex, e.RowIndex);
                 _cellValueChanged?.Invoke (this, args);
                 _valueChanged?.Invoke (this, args);
@@ -117,7 +125,7 @@ namespace Continuum.Forms.Telerik
         public new GridViewRowInfo? CurrentRow {
             get {
                 var row = base.CurrentRow;
-                return row is null || IsGroupRow (row) ? null : new GridViewRowInfo (row);
+                return row is null || IsStructuralRow (row) ? null : new GridViewRowInfo (row);
             }
         }
 
@@ -129,7 +137,7 @@ namespace Continuum.Forms.Telerik
             get {
                 var count = 0;
                 foreach (var row in base.Rows)
-                    if (!IsGroupRow (row))
+                    if (!IsStructuralRow (row))
                         count++;
                 return count;
             }
@@ -179,6 +187,97 @@ namespace Continuum.Forms.Telerik
         {
             base.OnColumnsChanged ();
             ApplyEnableSorting ();
+            ApplyAutoSizeColumns ();
+        }
+
+        /// <inheritdoc/>
+        protected override void SetBoundsCore (int x, int y, int width, int height, BoundsSpecified specified)
+        {
+            base.SetBoundsCore (x, y, width, height, specified);
+            ApplyAutoSizeColumns ();
+        }
+
+        /// <summary>
+        /// Sizes visible columns to fill the viewport (by <see cref="DataGridViewColumn.FillWeight"/>) when
+        /// <see cref="GridViewTemplate.AutoSizeColumnsMode"/> is <see cref="GridViewAutoSizeColumnsMode.Fill"/>.
+        /// Re-entrancy-guarded because setting a column width re-raises the column-changed notification.
+        /// </summary>
+        internal void ApplyAutoSizeColumns ()
+        {
+            if (_applyingAutoSize || MasterTemplate is null || MasterTemplate.AutoSizeColumnsMode != GridViewAutoSizeColumnsMode.Fill)
+                return;
+
+            var visible = base.Columns.Where (c => c.Visible).ToList ();
+            if (visible.Count == 0)
+                return;
+
+            var content = GetContentArea ();
+            var availableDevice = content.Width - (RowHeadersVisible ? ScaledRowHeadersWidth : 0);
+            var available = DeviceToLogicalUnits (availableDevice);
+            if (available <= 0)
+                return;
+
+            var totalWeight = visible.Sum (c => c.FillWeight <= 0 ? 1f : c.FillWeight);
+            if (totalWeight <= 0)
+                return;
+
+            _applyingAutoSize = true;
+            try {
+                var used = 0;
+                for (var i = 0; i < visible.Count; i++) {
+                    var column = visible[i];
+                    int width;
+                    if (i == visible.Count - 1) {
+                        width = Math.Max (column.MinimumWidth, available - used);
+                    } else {
+                        var weight = column.FillWeight <= 0 ? 1f : column.FillWeight;
+                        width = Math.Max (column.MinimumWidth, (int)(available * (weight / totalWeight)));
+                        used += width;
+                    }
+                    column.Width = width;
+                }
+            } finally {
+                _applyingAutoSize = false;
+            }
+
+            Invalidate ();
+        }
+
+        // Clamps a GridViewDecimalColumn cell's value to [Minimum, Maximum] and rounds to DecimalPlaces.
+        private void NormalizeDecimalCell (int columnIndex, int rowIndex)
+        {
+            if (columnIndex < 0 || columnIndex >= base.Columns.Count || base.Columns[columnIndex] is not GridViewDecimalColumn dc)
+                return;
+            if (rowIndex < 0 || rowIndex >= base.Rows.Count)
+                return;
+
+            var row = base.Rows[rowIndex];
+            if (IsStructuralRow (row) || columnIndex >= row.Cells.Count)
+                return;
+
+            var cell = row.Cells[columnIndex];
+            if (cell.Value is null)
+                return;
+
+            if (!decimal.TryParse (cell.Value.ToString (),
+                    NumberStyles.Any | NumberStyles.AllowCurrencySymbol, CultureInfo.CurrentCulture, out var value))
+                return;
+
+            var clamped = ClampDecimal (dc, value);
+            if (clamped != value)
+                cell.Value = clamped;
+        }
+
+        /// <summary>Clamps a value to the column's [Minimum, Maximum] range and rounds to its DecimalPlaces.</summary>
+        internal static decimal ClampDecimal (GridViewDecimalColumn column, decimal value)
+        {
+            if (value < column.Minimum)
+                value = column.Minimum;
+            if (value > column.Maximum)
+                value = column.Maximum;
+
+            var places = Math.Min (Math.Max (0, column.DecimalPlaces), 28);
+            return Math.Round (value, places, MidpointRounding.AwayFromZero);
         }
 
         /// <summary>Gets or sets whether grouped data auto-expands. Stub retained for compatibility.</summary>
@@ -207,8 +306,15 @@ namespace Continuum.Forms.Telerik
             }
         }
 
-        /// <summary>Gets or sets whether alternating rows are colored. Stub.</summary>
-        public bool EnableAlternatingRowColor { get; set; }
+        private bool _enableAlternatingRowColor;
+        /// <summary>Gets or sets whether alternating rows are colored. Defaults to false (Telerik default).</summary>
+        public bool EnableAlternatingRowColor {
+            get => _enableAlternatingRowColor;
+            set { _enableAlternatingRowColor = value; Invalidate (); }
+        }
+
+        /// <inheritdoc/>
+        protected internal override bool AlternatingRowColorsEnabled => _enableAlternatingRowColor;
 
         // ── Descriptors (also surfaced on MasterTemplate) ──
 
@@ -218,16 +324,50 @@ namespace Continuum.Forms.Telerik
         public GridDescriptorCollection<GroupDescriptor> GroupDescriptors { get; } = new ();
         /// <summary>Gets the filter descriptors. Changing the collection re-filters the view.</summary>
         public GridDescriptorCollection<FilterDescriptor> FilterDescriptors { get; } = new ();
+        /// <summary>Gets the summary rows shown above the data (grand totals). Changing the collection rebuilds the view.</summary>
+        public GridDescriptorCollection<GridViewSummaryRowItem> SummaryRowsTop { get; } = new ();
+        /// <summary>Gets the summary rows shown below the data (grand totals). Changing the collection rebuilds the view.</summary>
+        public GridDescriptorCollection<GridViewSummaryRowItem> SummaryRowsBottom { get; } = new ();
+        /// <summary>Gets the aggregate items shown as a footer under each (leaf) group when grouping is active.</summary>
+        public GridDescriptorCollection<GridViewSummaryItem> GroupSummaryItems { get; } = new ();
 
         /// <inheritdoc/>
         protected override int ContentTopOffset => ShowGroupPanel ? LogicalToDeviceUnits (GroupPanelLogicalHeight) : 0;
 
-        /// <summary>True when the displayed rows differ from the raw master (any filter, sort, or group applied).</summary>
+        private string _searchText = string.Empty;
+        /// <summary>
+        /// Gets or sets the quick-search text. When non-empty, only rows where some visible column's
+        /// display text contains it (case-insensitive) are shown — the Telerik search-row behavior,
+        /// combined with any column filters.
+        /// </summary>
+        public string SearchText {
+            get => _searchText;
+            set {
+                value ??= string.Empty;
+                if (_searchText == value)
+                    return;
+                _searchText = value;
+                RebuildView ();
+                Invalidate ();
+            }
+        }
+
+        /// <summary>Sets <see cref="SearchText"/> (Telerik-style search entry point).</summary>
+        public void Search (string text) => SearchText = text;
+
+        /// <summary>True when the displayed rows differ from the raw master (any filter, search, sort, group, or summary applied).</summary>
         internal bool HasViewTransform =>
-            GroupDescriptors.Count > 0 || SortDescriptors.Count > 0 || FilterDescriptors.Any (f => f.IsActive);
+            GroupDescriptors.Count > 0 || SortDescriptors.Count > 0 || FilterDescriptors.Any (f => f.IsActive)
+            || SummaryRowsTop.Count > 0 || SummaryRowsBottom.Count > 0 || !string.IsNullOrEmpty (_searchText);
 
         /// <summary>Returns whether the row is an injected group-header row.</summary>
         internal static bool IsGroupRow (DataGridViewRow row) => row.Tag is GridGroupRow;
+
+        /// <summary>Returns whether the row is an injected summary (aggregate) row.</summary>
+        internal static bool IsSummaryRow (DataGridViewRow row) => row.Tag is GridSummaryRow;
+
+        /// <summary>Returns whether the row is an injected structural row (group header or summary) rather than data.</summary>
+        internal static bool IsStructuralRow (DataGridViewRow row) => row.Tag is GridGroupRow || row.Tag is GridSummaryRow;
 
         /// <summary>Returns whether the column currently has an active filter (used by the renderer to highlight the funnel).</summary>
         internal bool ColumnHasActiveFilter (DataGridViewColumn column)
@@ -244,8 +384,20 @@ namespace Continuum.Forms.Telerik
             if (string.IsNullOrEmpty (columnName) || GroupDescriptors.Any (g => NameMatches (g.PropertyName, columnName)))
                 return;
 
+            // Honor a column opting out of grouping (Telerik GridViewColumn.AllowGroup).
+            if (ColumnByName (columnName) is { } column && !ColumnAllowsGrouping (column))
+                return;
+
             GroupDescriptors.Add (new GroupDescriptor (columnName, direction));
         }
+
+        /// <summary>Returns whether the column permits the end user to filter it.</summary>
+        internal static bool ColumnAllowsFiltering (DataGridViewColumn column)
+            => column is not GridViewColumn g || g.AllowFiltering;
+
+        /// <summary>Returns whether the column permits the end user to group by it.</summary>
+        internal static bool ColumnAllowsGrouping (DataGridViewColumn column)
+            => column is not GridViewColumn g || g.AllowGroup;
 
         /// <summary>Removes the grouping for the named column.</summary>
         public void UngroupColumn (string columnName)
@@ -312,7 +464,7 @@ namespace Continuum.Forms.Telerik
                 // Check-box columns render a fixed-size glyph, so size to the header only.
                 if (!column.DisplaysAsCheckBox && columnIndex >= 0) {
                     foreach (var row in base.Rows) {
-                        if (IsGroupRow (row) || columnIndex >= row.Cells.Count)
+                        if (IsStructuralRow (row) || columnIndex >= row.Cells.Count)
                             continue;
 
                         var text = ComputeFormattedText (row.Cells[columnIndex], column);
@@ -352,22 +504,34 @@ namespace Continuum.Forms.Telerik
                 RebuildView ();
         }
 
-        // Captures the current non-group display rows as the new master set.
+        // Captures the current data display rows (excluding injected structural rows) as the new master.
         private void SyncMasterFromDisplay ()
         {
             _master.Clear ();
             foreach (var row in base.Rows)
-                if (!IsGroupRow (row))
+                if (!IsStructuralRow (row))
                     _master.Add (row);
         }
 
-        // Rebuilds base.Rows from the master set by applying filters, sorting and grouping.
+        // Rebuilds base.Rows from the master set by applying filters, sorting, grouping, and summary rows.
         internal void RebuildView ()
         {
             if (_suspendRebuild || _master is null)
                 return;
 
             var display = HasViewTransform ? BuildDisplayRows (respectCollapse: true) : new List<DataGridViewRow> (_master);
+
+            // Grand summary rows are computed over the filtered data set and bracket the display rows.
+            if (SummaryRowsTop.Count > 0 || SummaryRowsBottom.Count > 0) {
+                var data = FilteredMaster ();
+                var combined = new List<DataGridViewRow> ();
+                foreach (var summary in SummaryRowsTop)
+                    combined.Add (CreateSummaryRow (summary, data));
+                combined.AddRange (display);
+                foreach (var summary in SummaryRowsBottom)
+                    combined.Add (CreateSummaryRow (summary, data));
+                display = combined;
+            }
 
             _applyingView = true;
             try {
@@ -377,17 +541,37 @@ namespace Continuum.Forms.Telerik
             }
         }
 
-        // Produces the displayed row list: filtered, sorted, with group-header rows interleaved.
-        private List<DataGridViewRow> BuildDisplayRows (bool respectCollapse)
+        // The master data rows after applying any active column filters and the quick-search text.
+        private List<DataGridViewRow> FilteredMaster ()
         {
             IEnumerable<DataGridViewRow> rows = _master;
 
-            // Filter
             var activeFilters = FilterDescriptors.Where (f => f.IsActive).ToList ();
             if (activeFilters.Count > 0)
                 rows = rows.Where (r => PassesFilters (r, activeFilters));
 
-            var list = rows.ToList ();
+            if (!string.IsNullOrEmpty (_searchText))
+                rows = rows.Where (MatchesSearch);
+
+            return rows.ToList ();
+        }
+
+        // True if any visible column's display text contains the quick-search text.
+        private bool MatchesSearch (DataGridViewRow row)
+        {
+            for (var i = 0; i < base.Columns.Count; i++) {
+                if (!base.Columns[i].Visible)
+                    continue;
+                if (GetCellDisplay (row, i).IndexOf (_searchText, StringComparison.CurrentCultureIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
+        // Produces the displayed row list: filtered, sorted, with group-header rows interleaved.
+        private List<DataGridViewRow> BuildDisplayRows (bool respectCollapse)
+        {
+            var list = FilteredMaster ();
 
             // Sort (group keys first so groups are contiguous, then explicit sort descriptors). Stable.
             if (GroupDescriptors.Count > 0 || SortDescriptors.Count > 0)
@@ -398,6 +582,60 @@ namespace Continuum.Forms.Telerik
 
             var result = new List<DataGridViewRow> ();
             BuildGroupLevel (list, 0, string.Empty, respectCollapse, result);
+            return result;
+        }
+
+        // Builds a summary (aggregate) row: a structural row carrying per-column computed display text.
+        private DataGridViewRow CreateSummaryRow (IEnumerable<GridViewSummaryItem> items, List<DataGridViewRow> data, int level = 0)
+        {
+            var values = new Dictionary<int, string> ();
+
+            foreach (var item in items) {
+                var colIndex = ColumnIndexByName (item.Name);
+                if (colIndex < 0)
+                    continue;
+                values[colIndex] = ComputeAggregate (item, colIndex, data);
+            }
+
+            return new DataGridViewRow { Tag = new GridSummaryRow { Values = values, Level = level } };
+        }
+
+        // Computes one aggregate over the column's values across the supplied rows, then formats it.
+        private string ComputeAggregate (GridViewSummaryItem item, int colIndex, List<DataGridViewRow> data)
+        {
+            object? result = item.Aggregate switch {
+                GridAggregateFunction.Count => data.Count,
+                GridAggregateFunction.First => data.Count > 0 ? GetCellDisplay (data[0], colIndex) : string.Empty,
+                GridAggregateFunction.Last => data.Count > 0 ? GetCellDisplay (data[^1], colIndex) : string.Empty,
+                GridAggregateFunction.Sum => Numbers (data, colIndex).DefaultIfEmpty (0).Sum (),
+                GridAggregateFunction.Average => Numbers (data, colIndex) is var n && n.Count > 0 ? n.Average () : (object?)null,
+                GridAggregateFunction.Min => Numbers (data, colIndex) is var n2 && n2.Count > 0 ? n2.Min () : (object?)null,
+                GridAggregateFunction.Max => Numbers (data, colIndex) is var n3 && n3.Count > 0 ? n3.Max () : (object?)null,
+                _ => null
+            };
+
+            if (result is null)
+                return string.Empty;
+
+            return string.IsNullOrEmpty (item.FormatString) ? result.ToString () ?? string.Empty : FormatValue (item.FormatString, result);
+        }
+
+        // Numeric cell values for a column (raw value when numeric, else parsed from display text).
+        private List<double> Numbers (List<DataGridViewRow> data, int colIndex)
+        {
+            var result = new List<double> ();
+            foreach (var row in data) {
+                if (colIndex >= row.Cells.Count)
+                    continue;
+                var raw = row.Cells[colIndex].Value;
+                if (raw is IConvertible && raw is not string && raw is not bool) {
+                    try { result.Add (Convert.ToDouble (raw, System.Globalization.CultureInfo.CurrentCulture)); continue; } catch { }
+                }
+                if (double.TryParse (GetCellDisplay (row, colIndex),
+                        System.Globalization.NumberStyles.Any | System.Globalization.NumberStyles.AllowCurrencySymbol,
+                        System.Globalization.CultureInfo.CurrentCulture, out var n))
+                    result.Add (n);
+            }
             return result;
         }
 
@@ -489,8 +727,13 @@ namespace Continuum.Forms.Telerik
                 };
                 result.Add (groupRow);
 
-                if (!collapsed)
+                if (!collapsed) {
                     BuildGroupLevel (members, level + 1, key, respectCollapse, result);
+
+                    // Group footer: aggregate over the leaf group's rows.
+                    if (level == GroupDescriptors.Count - 1 && GroupSummaryItems.Count > 0)
+                        result.Add (CreateSummaryRow (GroupSummaryItems, members, level + 1));
+                }
             }
         }
 
@@ -552,7 +795,9 @@ namespace Continuum.Forms.Telerik
 
         // ── Sorting ──
 
-        private void ToggleSort (int columnIndex)
+        // Cycles a column's sort: none → ascending → descending → none. When additive (Shift-click) the
+        // column joins the existing multi-column sort instead of replacing it.
+        private void ToggleSort (int columnIndex, bool additive = false)
         {
             if (columnIndex < 0 || columnIndex >= base.Columns.Count)
                 return;
@@ -563,15 +808,20 @@ namespace Continuum.Forms.Telerik
 
             var name = !string.IsNullOrEmpty (column.Name) ? column.Name : column.HeaderText;
             var existing = SortDescriptors.Find (s => NameMatches (s.PropertyName, column));
+            var previous = existing?.Direction;
 
             _suspendRebuild = true;
-            SortDescriptors.Clear ();   // single-column sort
 
-            if (existing is null)
+            if (!additive)
+                SortDescriptors.Clear ();
+            else if (existing is not null)
+                SortDescriptors.Remove (existing);
+
+            if (previous is null)
                 SortDescriptors.Add (new SortDescriptor (name, ListSortDirection.Ascending));
-            else if (existing.Direction == ListSortDirection.Ascending)
+            else if (previous == ListSortDirection.Ascending)
                 SortDescriptors.Add (new SortDescriptor (name, ListSortDirection.Descending));
-            // else: was descending → leave cleared (unsorted)
+            // else: was descending → cycle back to unsorted (leave it removed)
 
             _suspendRebuild = false;
             SyncSortGlyphs ();
@@ -666,10 +916,11 @@ namespace Continuum.Forms.Telerik
                     }
                 }
 
-                // 3) Group-header row → toggle expand/collapse.
+                // 3) Structural row: toggle a group header; otherwise just swallow (summary rows aren't selectable).
                 var rowIndex = GetRowAtLocation (e.Location);
-                if (rowIndex >= 0 && rowIndex < base.Rows.Count && IsGroupRow (base.Rows[rowIndex])) {
-                    ToggleGroupRow (base.Rows[rowIndex]);
+                if (rowIndex >= 0 && rowIndex < base.Rows.Count && IsStructuralRow (base.Rows[rowIndex])) {
+                    if (IsGroupRow (base.Rows[rowIndex]))
+                        ToggleGroupRow (base.Rows[rowIndex]);
                     return;
                 }
             }
@@ -720,7 +971,7 @@ namespace Continuum.Forms.Telerik
                     DragOverGroupPanel = false;
                     Invalidate ();
                 } else {
-                    ToggleSort (col);   // plain header click
+                    ToggleSort (col, additive: e.Shift);   // plain header click; Shift = multi-column sort
                 }
                 return;
             }
@@ -922,6 +1173,103 @@ namespace Continuum.Forms.Telerik
             }
         }
 
+        // ── CSV export ──
+
+        /// <summary>
+        /// Exports the grid to CSV — visible columns and their formatted display text, in the current
+        /// view order (filter/search/sort/group applied; group-header and summary rows excluded).
+        /// </summary>
+        public string ExportToCsv (bool includeHeaders = true)
+        {
+            var cols = new List<DataGridViewColumn> ();
+            foreach (DataGridViewColumn c in base.Columns)
+                if (c.Visible)
+                    cols.Add (c);
+
+            var lines = new List<string> ();
+
+            if (includeHeaders)
+                lines.Add (string.Join (",", cols.Select (c => CsvEscape (string.IsNullOrEmpty (c.HeaderText) ? c.Name : c.HeaderText))));
+
+            foreach (var row in base.Rows) {
+                if (IsStructuralRow (row))
+                    continue;
+                lines.Add (string.Join (",", cols.Select (c => CsvEscape (GetCellDisplay (row, c.Index)))));
+            }
+
+            return string.Join ("\r\n", lines);
+        }
+
+        /// <summary>Exports the grid to a CSV file (see <see cref="ExportToCsv(bool)"/>).</summary>
+        public void ExportToCsv (string fileName, bool includeHeaders = true)
+            => File.WriteAllText (fileName, ExportToCsv (includeHeaders));
+
+        // Quotes a CSV field when it contains a comma, quote, or line break (doubling embedded quotes).
+        private static string CsvEscape (string value)
+        {
+            value ??= string.Empty;
+            if (value.IndexOfAny (new[] { ',', '"', '\r', '\n' }) >= 0)
+                return "\"" + value.Replace ("\"", "\"\"") + "\"";
+            return value;
+        }
+
+        // ── Clipboard copy ──
+
+        /// <summary>Copies the selected rows to the clipboard as tab-separated text (honors <see cref="DataGridView.ClipboardCopyMode"/>).</summary>
+        public void CopySelectionToClipboard ()
+        {
+            var text = BuildClipboardText ();
+            if (!string.IsNullOrEmpty (text))
+                Clipboard.SetText (text);
+        }
+
+        // Builds the tab-separated clipboard text for the selected (non-structural) rows.
+        internal string BuildClipboardText ()
+        {
+            if (ClipboardCopyMode == DataGridViewClipboardCopyMode.Disable)
+                return string.Empty;
+
+            var cols = new List<DataGridViewColumn> ();
+            foreach (DataGridViewColumn c in base.Columns)
+                if (c.Visible)
+                    cols.Add (c);
+
+            var selected = new List<DataGridViewRow> ();
+            foreach (var r in base.Rows)
+                if (!IsStructuralRow (r) && r.Selected)
+                    selected.Add (r);
+
+            if (selected.Count == 0)
+                return string.Empty;
+
+            var includeHeaders = ClipboardCopyMode != DataGridViewClipboardCopyMode.EnableWithoutHeaderText;
+            var lines = new List<string> ();
+
+            if (includeHeaders)
+                lines.Add (string.Join ("\t", cols.Select (c => TabSanitize (string.IsNullOrEmpty (c.HeaderText) ? c.Name : c.HeaderText))));
+
+            foreach (var r in selected)
+                lines.Add (string.Join ("\t", cols.Select (c => TabSanitize (GetCellDisplay (r, c.Index)))));
+
+            return string.Join ("\r\n", lines);
+        }
+
+        // Replaces tab/newline characters so a field stays on its own TSV column/row.
+        private static string TabSanitize (string value)
+            => (value ?? string.Empty).Replace ('\t', ' ').Replace ('\r', ' ').Replace ('\n', ' ');
+
+        /// <inheritdoc/>
+        protected override void OnKeyDown (KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.C) {
+                CopySelectionToClipboard ();
+                e.Handled = true;
+                return;
+            }
+
+            base.OnKeyDown (e);
+        }
+
         // ── Events (forwarded from the base grid; see ctor) ──
 
         private EventHandler<GridViewCellEventArgs>? _cellClick, _commandCellClick, _cellDoubleClick, _cellValueChanged, _valueChanged, _cellEndEdit;
@@ -1015,7 +1363,7 @@ namespace Continuum.Forms.Telerik
                 menu.Items.Add (new MenuItem ("Clear Sorting", (SKBitmap?)null, (_, _) => { SortDescriptors.Clear (); SyncSortGlyphs (); }));
             }
 
-            if (EnableGrouping) {
+            if (EnableGrouping && ColumnAllowsGrouping (column)) {
                 var isGrouped = GroupDescriptors.Any (g => NameMatches (g.PropertyName, name));
                 menu.Items.Add (new MenuItem (isGrouped ? "Ungroup This Column" : "Group By This Column", (SKBitmap?)null,
                     (_, _) => { if (isGrouped) UngroupColumn (name); else GroupByColumn (name); }));
@@ -1023,7 +1371,7 @@ namespace Continuum.Forms.Telerik
                     menu.Items.Add (new MenuItem ("Clear Grouping", (SKBitmap?)null, (_, _) => ClearGrouping ()));
             }
 
-            if (EnableFiltering) {
+            if (EnableFiltering && ColumnAllowsFiltering (column)) {
                 menu.Items.Add (new MenuItem ("Filter…", (SKBitmap?)null, (_, _) => ShowFilterPopup (columnIndex)));
                 if (FilterDescriptors.Any (f => NameMatches (f.PropertyName, name)))
                     menu.Items.Add (new MenuItem ("Clear Filter", (SKBitmap?)null, (_, _) => ClearColumnFilter (name)));
@@ -1031,8 +1379,19 @@ namespace Continuum.Forms.Telerik
 
             menu.Items.Add (new MenuItem ("Best Fit Columns", (SKBitmap?)null, (_, _) => BestFitColumns ()));
 
+            if (AllowColumnChooser)
+                menu.Items.Add (new MenuItem ("Column Chooser…", (SKBitmap?)null, (_, _) => RadGridColumnChooser.Show (this, PointToScreen (location))));
+
             if (menu.Items.Count > 0)
                 menu.Show (this, PointToScreen (location));
+        }
+
+        /// <summary>Shows the column chooser popup, letting the user toggle column visibility.</summary>
+        public void ShowColumnChooser ()
+        {
+            if (FindWindow () is null)
+                return;
+            RadGridColumnChooser.Show (this, PointToScreen (new Point (0, ScaledHeaderHeight)));
         }
 
         private void SetSort (string name, ListSortDirection direction)
@@ -1049,7 +1408,7 @@ namespace Continuum.Forms.Telerik
         private GridViewRowElement? RowElementUnder (Point location)
         {
             foreach (var row in base.Rows) {
-                if (IsGroupRow (row))
+                if (IsStructuralRow (row))
                     continue;
                 foreach (DataGridViewCell cell in row.Cells)
                     if (cell.Bounds.Contains (location))
@@ -1062,21 +1421,98 @@ namespace Continuum.Forms.Telerik
         /// <inheritdoc/>
         protected override void OnDoubleClick (MouseEventArgs e)
         {
-            // Don't begin editing on a group-header row; toggle it instead.
+            // Don't begin editing on a structural row; toggle a group header, swallow a summary row.
             var rowIndex = GetRowAtLocation (e.Location);
-            if (rowIndex >= 0 && rowIndex < base.Rows.Count && IsGroupRow (base.Rows[rowIndex])) {
-                ToggleGroupRow (base.Rows[rowIndex]);
+            if (rowIndex >= 0 && rowIndex < base.Rows.Count && IsStructuralRow (base.Rows[rowIndex])) {
+                if (IsGroupRow (base.Rows[rowIndex]))
+                    ToggleGroupRow (base.Rows[rowIndex]);
                 return;
+            }
+
+            // Combo / date columns open a dedicated in-place editor instead of the text editor.
+            var colIndex = GetColumnAtLocation (e.Location);
+            if (rowIndex >= 0 && colIndex >= 0 && colIndex < base.Columns.Count) {
+                if (base.Columns[colIndex] is GridViewComboBoxColumn) {
+                    ShowComboEditor (rowIndex, colIndex);
+                    return;
+                }
+                if (base.Columns[colIndex] is GridViewDateTimeColumn) {
+                    ShowDateEditor (rowIndex, colIndex);
+                    return;
+                }
             }
 
             base.OnDoubleClick (e);
         }
 
+        // Opens the in-place calendar editor for a GridViewDateTimeColumn cell.
+        private void ShowDateEditor (int rowIndex, int colIndex)
+        {
+            if (ReadOnly || FindWindow () is null || rowIndex < 0 || rowIndex >= base.Rows.Count)
+                return;
+
+            var row = base.Rows[rowIndex];
+            if (IsStructuralRow (row) || colIndex >= row.Cells.Count)
+                return;
+
+            var cell = row.Cells[colIndex];
+            if (cell.ReadOnly)
+                return;
+
+            var current = TryGetCellDate (cell.Value, out var dt) ? dt : (DateTime?)null;
+            var anchor = new Point (cell.Bounds.Left, cell.Bounds.Bottom);
+            RadGridDateEditor.Show (this, current, PointToScreen (anchor), picked => {
+                cell.Value = picked;
+                OnCellValueChanged (new DataGridViewCellEditEventArgs (rowIndex, colIndex));
+                Invalidate ();
+            });
+        }
+
+        /// <summary>Extracts a <see cref="DateTime"/> from a cell value (already a DateTime, or parseable text).</summary>
+        internal static bool TryGetCellDate (object? value, out DateTime date)
+        {
+            if (value is DateTime dt) {
+                date = dt;
+                return true;
+            }
+            return DateTime.TryParse (value?.ToString (), CultureInfo.CurrentCulture, DateTimeStyles.None, out date);
+        }
+
+        // Opens the in-place combo drop-down for a GridViewComboBoxColumn cell.
+        private void ShowComboEditor (int rowIndex, int colIndex)
+        {
+            if (ReadOnly || FindWindow () is null)
+                return;
+            if (colIndex < 0 || colIndex >= base.Columns.Count || base.Columns[colIndex] is not GridViewComboBoxColumn combo)
+                return;
+            if (rowIndex < 0 || rowIndex >= base.Rows.Count)
+                return;
+
+            var row = base.Rows[rowIndex];
+            if (IsStructuralRow (row) || colIndex >= row.Cells.Count)
+                return;
+
+            var cell = row.Cells[colIndex];
+            if (cell.ReadOnly)
+                return;
+
+            var items = combo.GetEditorItems ();
+            if (items.Count == 0)
+                return;
+
+            var anchor = new Point (cell.Bounds.Left, cell.Bounds.Bottom);
+            RadGridComboEditor.Show (this, items, combo.LookupDisplay (cell.Value), PointToScreen (anchor), cell.Bounds.Width, picked => {
+                cell.Value = picked;
+                OnCellValueChanged (new DataGridViewCellEditEventArgs (rowIndex, colIndex));
+                Invalidate ();
+            });
+        }
+
         /// <inheritdoc/>
         protected internal override void RaiseRowFormatting (DataGridViewRow row, int rowIndex)
         {
-            // Group-header rows are drawn by the renderer; skip user formatting (they have no data cells).
-            if (IsGroupRow (row))
+            // Structural rows (group headers / summaries) are drawn by the renderer; skip user formatting.
+            if (IsStructuralRow (row))
                 return;
 
             // Clear the per-cell colors and text overrides we manage so conditional formatting doesn't
@@ -1087,6 +1523,9 @@ namespace Continuum.Forms.Telerik
                 cell.Style.ForegroundColor = null;
                 cell.FormattedTextOverride = null;
             }
+
+            // Row-level conditional formatting (rules flagged ApplyToRow).
+            ApplyRowConditionalFormatting (row);
 
             if (_rowFormatting is null)
                 return;
@@ -1110,7 +1549,7 @@ namespace Continuum.Forms.Telerik
         /// <inheritdoc/>
         protected internal override void RaiseCellFormatting (DataGridViewRow row, int rowIndex, int columnIndex)
         {
-            if (IsGroupRow (row) || columnIndex < 0 || columnIndex >= row.Cells.Count)
+            if (IsStructuralRow (row) || columnIndex < 0 || columnIndex >= row.Cells.Count)
                 return;
 
             var cell = row.Cells[columnIndex];
@@ -1118,6 +1557,9 @@ namespace Continuum.Forms.Telerik
 
             var originalText = cell.Value?.ToString () ?? string.Empty;
             var displayText = ComputeFormattedText (cell, column);
+
+            // Cell-level conditional formatting (rules not flagged ApplyToRow). User events override below.
+            ApplyCellConditionalFormatting (cell, column, displayText);
 
             // Raise the Telerik formatting events (handlers may further change Text / colors).
             if (_cellFormatting is not null || _viewCellFormatting is not null) {
@@ -1149,6 +1591,52 @@ namespace Continuum.Forms.Telerik
             // Only override the displayed text when formatting actually changed it.
             if (!string.Equals (displayText, originalText, StringComparison.Ordinal))
                 cell.FormattedTextOverride = displayText;
+        }
+
+        // Applies a column's non-row conditional-formatting rules to a single cell.
+        private static void ApplyCellConditionalFormatting (DataGridViewCell cell, DataGridViewColumn? column, string displayText)
+        {
+            if (column is not GridViewColumn gvc || gvc.ConditionalFormattingObjectList.Count == 0)
+                return;
+
+            foreach (var rule in gvc.ConditionalFormattingObjectList) {
+                if (rule.ApplyToRow || !rule.Matches (displayText))
+                    continue;
+                if (rule.CellBackColor != Color.Empty)
+                    cell.Style.BackgroundColor = ToSK (rule.CellBackColor);
+                if (rule.CellForeColor != Color.Empty)
+                    cell.Style.ForegroundColor = ToSK (rule.CellForeColor);
+            }
+        }
+
+        // Applies every column's ApplyToRow conditional-formatting rules across the whole row.
+        private void ApplyRowConditionalFormatting (DataGridViewRow row)
+        {
+            for (var i = 0; i < base.Columns.Count; i++) {
+                if (base.Columns[i] is not GridViewColumn gvc || gvc.ConditionalFormattingObjectList.Count == 0 || i >= row.Cells.Count)
+                    continue;
+
+                var text = GetCellDisplay (row, i);
+
+                foreach (var rule in gvc.ConditionalFormattingObjectList) {
+                    if (!rule.ApplyToRow || !rule.Matches (text))
+                        continue;
+
+                    var back = rule.RowBackColor != Color.Empty ? rule.RowBackColor : rule.CellBackColor;
+                    var fore = rule.RowForeColor != Color.Empty ? rule.RowForeColor : rule.CellForeColor;
+
+                    if (back != Color.Empty) {
+                        var sk = ToSK (back);
+                        foreach (DataGridViewCell c in row.Cells)
+                            c.Style.BackgroundColor = sk;
+                    }
+                    if (fore != Color.Empty) {
+                        var sk = ToSK (fore);
+                        foreach (DataGridViewCell c in row.Cells)
+                            c.Style.ForegroundColor = sk;
+                    }
+                }
+            }
         }
 
         // Computes a cell's display text: a combo column resolves the stored value to its display text
@@ -1194,9 +1682,9 @@ namespace Continuum.Forms.Telerik
             };
         }
 
-        // Wraps the base row at the given index, or null if out of range / a group row.
+        // Wraps the base row at the given index, or null if out of range / a structural row.
         private GridViewRowInfo? RowAt (int rowIndex)
-            => rowIndex >= 0 && rowIndex < base.Rows.Count && !IsGroupRow (base.Rows[rowIndex])
+            => rowIndex >= 0 && rowIndex < base.Rows.Count && !IsStructuralRow (base.Rows[rowIndex])
                 ? new GridViewRowInfo (base.Rows[rowIndex]) : null;
     }
 
@@ -1210,6 +1698,15 @@ namespace Continuum.Forms.Telerik
         public int Level;
         public string Key = string.Empty;
         public bool Collapsed;
+    }
+
+    /// <summary>Describes an injected summary (aggregate) row (stored on <see cref="DataGridViewRow.Tag"/>).</summary>
+    internal sealed class GridSummaryRow
+    {
+        // Display text per column index (columns without a summary item are blank).
+        public Dictionary<int, string> Values = new ();
+        // Indent level (0 for grand totals; group footers carry their group depth).
+        public int Level;
     }
 
     /// <summary>Layout of a single group-panel "pill", published by the renderer for hit-testing.</summary>
@@ -1254,8 +1751,12 @@ namespace Continuum.Forms.Telerik
         public bool MultiSelect { get; set; }
         /// <summary>Gets or sets whether the grid is read-only.</summary>
         public bool ReadOnly { get; set; }
-        /// <summary>Gets or sets the auto-size columns mode. Stub.</summary>
-        public object? AutoSizeColumnsMode { get; set; }
+        private GridViewAutoSizeColumnsMode _autoSizeColumnsMode = GridViewAutoSizeColumnsMode.None;
+        /// <summary>Gets or sets the auto-size columns mode. <see cref="GridViewAutoSizeColumnsMode.Fill"/> sizes visible columns to fill the viewport.</summary>
+        public GridViewAutoSizeColumnsMode AutoSizeColumnsMode {
+            get => _autoSizeColumnsMode;
+            set { _autoSizeColumnsMode = value; _grid.ApplyAutoSizeColumns (); }
+        }
         /// <summary>Gets or sets whether paging is enabled.</summary>
         public bool EnablePaging { get; set; }
         /// <summary>Gets or sets the page size.</summary>
@@ -1266,10 +1767,10 @@ namespace Continuum.Forms.Telerik
         public GridDescriptorCollection<GroupDescriptor> GroupDescriptors => _grid.GroupDescriptors;
         /// <summary>Gets the filter descriptors (the grid's own collection).</summary>
         public GridDescriptorCollection<FilterDescriptor> FilterDescriptors => _grid.FilterDescriptors;
-        /// <summary>Gets the summary rows shown at the bottom. Stub list.</summary>
-        public List<object> SummaryRowsBottom { get; } = new ();
-        /// <summary>Gets the summary rows shown at the top. Stub list.</summary>
-        public List<object> SummaryRowsTop { get; } = new ();
+        /// <summary>Gets the summary rows shown below the data (the grid's own collection).</summary>
+        public GridDescriptorCollection<GridViewSummaryRowItem> SummaryRowsBottom => _grid.SummaryRowsBottom;
+        /// <summary>Gets the summary rows shown above the data (the grid's own collection).</summary>
+        public GridDescriptorCollection<GridViewSummaryRowItem> SummaryRowsTop => _grid.SummaryRowsTop;
 
         /// <summary>Auto-sizes columns.</summary>
         public void BestFitColumns () => _grid.BestFitColumns ();
@@ -1318,8 +1819,12 @@ namespace Continuum.Forms.Telerik
         }
         /// <summary>Gets or sets whether the column appears in the column chooser. Stub.</summary>
         public bool VisibleInColumnChooser { get; set; } = true;
-        /// <summary>Gets or sets the pinned position. Stub.</summary>
-        public object? PinPosition { get; set; }
+        private PinnedColumnPosition _pinPosition;
+        /// <summary>Gets or sets the pinned position. <see cref="PinnedColumnPosition.Left"/> freezes the column to the left.</summary>
+        public PinnedColumnPosition PinPosition {
+            get => _pinPosition;
+            set { _pinPosition = value; Frozen = value == PinnedColumnPosition.Left; }
+        }
         /// <summary>Gets or sets whether text wraps. Stub.</summary>
         public bool WrapText { get; set; }
         /// <summary>Gets or sets whether reordering is allowed. Stub.</summary>
@@ -1335,8 +1840,8 @@ namespace Continuum.Forms.Telerik
         public bool AllowGroup { get; set; } = true;
         /// <summary>Gets or sets the column data type. Stub.</summary>
         public Type? DataType { get; set; }
-        /// <summary>Gets the conditional-formatting object list. Stub.</summary>
-        public List<object> ConditionalFormattingObjectList { get; } = new ();
+        /// <summary>Gets the conditional-formatting rules applied to this column's cells.</summary>
+        public List<ConditionalFormattingObject> ConditionalFormattingObjectList { get; } = new ();
 
         /// <summary>Auto-sizes this column to its content. Stub.</summary>
         public void BestFit () { }
@@ -1394,6 +1899,29 @@ namespace Continuum.Forms.Telerik
             }
 
             return _lookup is not null && _lookup.TryGetValue (value.ToString () ?? string.Empty, out var display) ? display : null;
+        }
+
+        /// <summary>
+        /// Returns the (underlying value, display text) pairs from the drop-down's DataSource, used to
+        /// populate the in-place combo editor.
+        /// </summary>
+        internal List<(object? Value, string Display)> GetEditorItems ()
+        {
+            var result = new List<(object?, string)> ();
+            var items = AsEnumerable (DataSource);
+            if (items is null || string.IsNullOrEmpty (ValueMember) || string.IsNullOrEmpty (DisplayMember))
+                return result;
+
+            foreach (var item in items) {
+                if (item is null)
+                    continue;
+                var value = GetMemberValue (item, ValueMember);
+                var display = GetMemberValue (item, DisplayMember)?.ToString ();
+                if (display is not null)
+                    result.Add ((value, display));
+            }
+
+            return result;
         }
 
         private Dictionary<string, string>? BuildLookup ()
@@ -1499,7 +2027,7 @@ namespace Continuum.Forms.Telerik
             get {
                 var list = new List<DataGridViewRow> ();
                 foreach (var row in _rows)
-                    if (!RadGridView.IsGroupRow (row))
+                    if (!RadGridView.IsStructuralRow (row))
                         list.Add (row);
                 return list;
             }
