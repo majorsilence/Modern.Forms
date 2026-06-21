@@ -100,9 +100,12 @@ namespace Continuum.Forms.Renderers
             // Draw right border
             e.Canvas.DrawLine (bounds.Right - 1, bounds.Top, bounds.Right - 1, bounds.Bottom, Theme.BorderLowColor);
 
-            // Draw text
+            // Draw text, reserving room on the right for any glyphs (sort/filter funnel) a subclass draws.
             var text_bounds = bounds;
             text_bounds.Inflate (-6, 0);
+            var right_inset = HeaderRightInset (control, column);
+            if (right_inset > 0)
+                text_bounds.Width = Math.Max (0, text_bounds.Width - right_inset);
 
             var fg = control.ColumnHeadersDefaultCellStyle.ForegroundColor ?? Theme.ForegroundColor;
             var font = control.ColumnHeadersDefaultCellStyle.Font ?? Theme.UIFontBold;
@@ -303,6 +306,12 @@ namespace Continuum.Forms.Renderers
 
             var text_bounds = bounds;
             text_bounds.Inflate (-4, 0);
+            // Reserve room on the left for any glyph a subclass draws (e.g. a master-detail expander).
+            var left_inset = CellLeftInset (control, column);
+            if (left_inset > 0) {
+                text_bounds.X += left_inset;
+                text_bounds.Width = Math.Max (0, text_bounds.Width - left_inset);
+            }
 
             var fg = cellStyle?.ForegroundColor ?? control.DefaultCellStyle.ForegroundColor ?? Theme.ForegroundColor;
             var font = cellStyle?.Font ?? control.DefaultCellStyle.Font ?? Theme.UIFont;
@@ -327,6 +336,12 @@ namespace Continuum.Forms.Renderers
         /// whose <c>WrapText</c> is set, so tall rows show multi-line content).
         /// </summary>
         protected virtual int? CellTextMaxLines (DataGridViewColumn column) => 1;
+
+        /// <summary>Device-pixel left inset applied to a cell's text, leaving room for a glyph a subclass draws at the cell's left (e.g. a master-detail expander). Default 0.</summary>
+        protected virtual int CellLeftInset (DataGridView control, DataGridViewColumn column) => 0;
+
+        /// <summary>Device-pixel right inset applied to a header's text, leaving room for glyphs a subclass draws at the header's right (sort/filter). Default 0.</summary>
+        protected virtual int HeaderRightInset (DataGridView control, DataGridViewColumn column) => 0;
 
         private static void RenderCheckBoxCell (PaintEventArgs e, Rectangle bounds, string value)
         {

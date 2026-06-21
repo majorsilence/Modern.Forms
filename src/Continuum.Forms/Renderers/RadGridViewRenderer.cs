@@ -111,6 +111,36 @@ namespace Continuum.Forms.Renderers
             => column is Continuum.Forms.Telerik.GridViewColumn { WrapText: true } ? null : 1;
 
         /// <inheritdoc/>
+        protected override int CellLeftInset (DataGridView control, DataGridViewColumn column)
+            => control is RadGridView grid && grid.HasChildView && ReferenceEquals (column, LeftmostColumn (control))
+                ? control.LogicalToDeviceUnits (18) : 0;
+
+        /// <inheritdoc/>
+        protected override int HeaderRightInset (DataGridView control, DataGridViewColumn column)
+        {
+            if (control is RadGridView grid && grid.EnableFiltering && RadGridView.ColumnAllowsFiltering (column))
+                return control.LogicalToDeviceUnits (26);   // keep text left of the funnel (drawn at Right-30)
+            if (column.Sortable && column.SortOrder != SortOrder.None)
+                return control.LogicalToDeviceUnits (16);   // room for the sort glyph alone
+            return 0;
+        }
+
+        // The physically leftmost visible column (where the master-detail expander is drawn): the first
+        // visible frozen column if any, otherwise the first visible column.
+        private static DataGridViewColumn? LeftmostColumn (DataGridView control)
+        {
+            DataGridViewColumn? firstVisible = null;
+            foreach (DataGridViewColumn c in control.Columns) {
+                if (!c.Visible)
+                    continue;
+                firstVisible ??= c;
+                if (c.Frozen)
+                    return c;
+            }
+            return firstVisible;
+        }
+
+        /// <inheritdoc/>
         protected override void RenderRow (DataGridView control, DataGridViewRow row, int rowIndex, Rectangle bounds, PaintEventArgs e)
         {
             if (row.Tag is GridGroupRow group) {
