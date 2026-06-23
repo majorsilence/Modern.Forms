@@ -227,7 +227,7 @@ namespace Majorsilence.Forms
         }
 
         /// <summary>Marks the entire window as needing to be redrawn.</summary>
-        public void Invalidate () => Backend.Invalidate ();
+        public virtual void Invalidate () => Backend.Invalidate ();
 
         /// <summary>Marks the specified portion of the window as needing to be redrawn.</summary>
         public void Invalidate (System.Drawing.Rectangle rectangle) => Invalidate ();
@@ -441,9 +441,16 @@ namespace Majorsilence.Forms
 
         internal virtual void SetWindowStartupLocation (WindowBase? owner = null) { }
 
+        // Lets a subclass (Form) divert Show() into being hosted inside another window — an MDI child is
+        // placed in its parent's MDI client area rather than getting its own top-level OS window.
+        internal virtual bool TryShowHosted () => false;
+
         /// <summary>Displays the window to the user.</summary>
         public void Show ()
         {
+            if (TryShowHosted ())
+                return;
+
             Visible = true;
             OnVisibleChanged (EventArgs.Empty);
 
@@ -492,6 +499,41 @@ namespace Majorsilence.Forms
         public virtual ControlStyle Style { get; } = new ControlStyle (DefaultStyle);
 
         /// <summary>Gets or sets whether the window is displayed to the user.</summary>
-        public bool Visible { get; private set; }
+        public bool Visible { get; internal set; }
+
+        // ── WinForms layout/handle/color compatibility ───────────────────────────
+        // Form sits on a separate inheritance branch from Control (Form : WindowBase, not
+        // Form : ContainerControl as in WinForms), so it does not inherit Control's layout
+        // members. These shims forward to the root ControlAdapter — which IS a Control and
+        // already hosts the window's children — so migrated WinForms code that calls
+        // SuspendLayout/ResumeLayout/PerformLayout on a Form compiles and behaves correctly.
+
+        /// <summary>Temporarily suspends the layout logic for the window's controls.</summary>
+        public void SuspendLayout () => adapter.SuspendLayout ();
+
+        /// <summary>Resumes normal layout logic, optionally forcing an immediate layout.</summary>
+        public void ResumeLayout (bool performLayout = true) => adapter.ResumeLayout (performLayout);
+
+        /// <summary>Forces the window's controls to apply layout logic.</summary>
+        public void PerformLayout () => adapter.PerformLayout ();
+
+        /// <summary>
+        /// Gets whether the window's backing handle has been created. In Majorsilence.Forms the
+        /// platform handle exists once the window has been shown; migrated code uses this to guard
+        /// cross-thread Invoke/BeginInvoke calls.
+        /// </summary>
+        public bool IsHandleCreated => shown;
+
+        /// <summary>
+        /// Gets or sets the background color of the window. Convenience wrapper over
+        /// <see cref="ControlStyle.BackgroundColor"/>, mirroring <see cref="Control.BackColor"/>.
+        /// </summary>
+        public System.Drawing.Color BackColor {
+            get => Style.BackgroundColor?.ToDrawingColor () ?? Style.GetBackgroundColor ().ToDrawingColor ();
+            set {
+                Style.BackgroundColor = value.ToSKColor ();
+                Invalidate ();
+            }
+        }
     }
 }

@@ -34,6 +34,7 @@ namespace ControlGallery
             tree.Items.Add ("LinkLabel", ImageLoader.Get ("button.png"));
             tree.Items.Add ("ListBox", ImageLoader.Get ("button.png"));
             tree.Items.Add ("ListView", ImageLoader.Get ("button.png"));
+            tree.Items.Add ("MDI", ImageLoader.Get ("button.png"));
             tree.Items.Add ("Menu", ImageLoader.Get ("button.png"));
             tree.Items.Add ("MenuStrip", ImageLoader.Get ("button.png"));
             tree.Items.Add ("MessageBox", ImageLoader.Get ("button.png"));
@@ -54,6 +55,7 @@ namespace ControlGallery
             tree.Items.Add ("Telerik: GridView", ImageLoader.Get ("button.png"));
             tree.Items.Add ("Telerik: PageView", ImageLoader.Get ("button.png"));
             tree.Items.Add ("Telerik: PropertyGrid", ImageLoader.Get ("button.png"));
+            tree.Items.Add ("Telerik: TabbedForm", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TableLayoutPanel", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TabStrip", ImageLoader.Get ("button.png"));
             tree.Items.Add ("TextBox", ImageLoader.Get ("button.png"));
@@ -122,6 +124,8 @@ namespace ControlGallery
                     return new ListBoxPanel ();
                 case "ListView":
                     return new ListViewPanel ();
+                case "MDI":
+                    return new MdiPanel ();
                 case "Menu":
                     return new MenuPanel ();
                 case "MenuStrip":
@@ -162,6 +166,8 @@ namespace ControlGallery
                     return new TelerikPageViewPanel ();
                 case "Telerik: PropertyGrid":
                     return new TelerikPropertyGridPanel ();
+                case "Telerik: TabbedForm":
+                    return new TelerikTabbedFormPanel ();
                 case "TableLayoutPanel":
                     return new TableLayoutPanelPanel ();
                 case "TabStrip":

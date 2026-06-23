@@ -27,15 +27,31 @@ public class ProjectConverterTests
     }
 
     [Fact]
-    public void Retargets_framework ()
+    public void Strips_windows_suffix_preserving_the_version ()
     {
         var result = ProjectConverter.Convert (WinFormsCsproj, Options (), ".");
-        Assert.Contains ("<TargetFramework>net10.0</TargetFramework>", result.Xml);
+        Assert.Contains ("<TargetFramework>net8.0</TargetFramework>", result.Xml);
         Assert.DoesNotContain ("net8.0-windows", result.Xml);
     }
 
     [Fact]
-    public void Normalizes_TargetFrameworks_plural_to_singular ()
+    public void Strips_windows_platform_version_suffix ()
+    {
+        var xml = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+                <UseWindowsForms>true</UseWindowsForms>
+              </PropertyGroup>
+            </Project>
+            """;
+        var result = ProjectConverter.Convert (xml, Options (), ".");
+        Assert.Contains ("<TargetFramework>net10.0</TargetFramework>", result.Xml);
+        Assert.DoesNotContain ("windows", result.Xml);
+    }
+
+    [Fact]
+    public void Strips_windows_in_each_TargetFrameworks_entry_keeping_it_plural ()
     {
         var xml = """
             <Project Sdk="Microsoft.NET.Sdk">
@@ -46,8 +62,17 @@ public class ProjectConverterTests
             </Project>
             """;
         var result = ProjectConverter.Convert (xml, Options (), ".");
+        Assert.Contains ("<TargetFrameworks>net8.0;net48</TargetFrameworks>", result.Xml);
+        Assert.DoesNotContain ("net8.0-windows", result.Xml);
+    }
+
+    [Fact]
+    public void Explicit_tfm_forces_the_exact_framework ()
+    {
+        var options = new MigrationOptions { Input = "x", TargetFramework = "net10.0" };
+        var result = ProjectConverter.Convert (WinFormsCsproj, options, ".");
         Assert.Contains ("<TargetFramework>net10.0</TargetFramework>", result.Xml);
-        Assert.DoesNotContain ("TargetFrameworks", result.Xml);
+        Assert.DoesNotContain ("net8.0", result.Xml);
     }
 
     [Fact]
@@ -98,6 +123,91 @@ public class ProjectConverterTests
             """;
         var result = ProjectConverter.Convert (xml, Options (), ".");
         Assert.Equal (1, CountOccurrences (result.Xml, "Include=\"Majorsilence.Forms\""));
+    }
+
+    [Fact]
+    public void Central_package_management_omits_the_version_attribute ()
+    {
+        var result = ProjectConverter.Convert (WinFormsCsproj, Options (), ".", centralPackageManagement: true);
+        Assert.Contains ("<PackageReference Include=\"Majorsilence.Forms\" />", result.Xml);
+        Assert.Contains ("<PackageReference Include=\"Majorsilence.Forms.Avalonia\" />", result.Xml);
+        // No inline Version anywhere — it belongs in Directory.Packages.props.
+        Assert.DoesNotContain ("Version=", result.Xml);
+    }
+
+    [Fact]
+    public void Central_package_management_reports_added_packages ()
+    {
+        var result = ProjectConverter.Convert (WinFormsCsproj, Options (Backend.Uno), ".", centralPackageManagement: true);
+        Assert.Equal (new[] { "Majorsilence.Forms", "Majorsilence.Forms.Uno" }, result.AddedPackages);
+    }
+
+    [Fact]
+    public void Non_central_management_still_pins_the_version_inline ()
+    {
+        var result = ProjectConverter.Convert (WinFormsCsproj, Options (), ".");
+        Assert.Contains ("Version=\"0.3.0\"", result.Xml);
+    }
+
+    [Fact]
+    public void Removes_Telerik_WinForms_package_reference ()
+    {
+        var xml = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><UseWindowsForms>true</UseWindowsForms></PropertyGroup>
+              <ItemGroup>
+                <PackageReference Include="Telerik.UI.for.WinForms.AllControls" Version="2024.1.1" />
+                <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+              </ItemGroup>
+            </Project>
+            """;
+        var result = ProjectConverter.Convert (xml, Options (), ".");
+        Assert.DoesNotContain ("Telerik.UI.for.WinForms", result.Xml);
+        // An unrelated package is left in place.
+        Assert.Contains ("Newtonsoft.Json", result.Xml);
+    }
+
+    [Fact]
+    public void Removes_central_PackageVersion_for_a_WinForms_package ()
+    {
+        var xml = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><UseWindowsForms>true</UseWindowsForms></PropertyGroup>
+              <ItemGroup>
+                <PackageVersion Include="Telerik.UI.for.WinForms" Version="2024.1.1" />
+              </ItemGroup>
+            </Project>
+            """;
+        var result = ProjectConverter.Convert (xml, Options (), ".");
+        Assert.DoesNotContain ("Telerik.UI.for.WinForms", result.Xml);
+    }
+
+    [Fact]
+    public void Custom_remove_pattern_drops_a_matching_package ()
+    {
+        var xml = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><UseWindowsForms>true</UseWindowsForms></PropertyGroup>
+              <ItemGroup><PackageReference Include="Acme.WinForms.Grid" Version="1.0.0" /></ItemGroup>
+            </Project>
+            """;
+        var result = ProjectConverter.Convert (xml, Options (), ".",
+            removePackagePatterns: new[] { "Acme.WinForms.*" });
+        Assert.DoesNotContain ("Acme.WinForms.Grid", result.Xml);
+    }
+
+    [Fact]
+    public void Does_not_add_references_when_not_a_winforms_project ()
+    {
+        var xml = """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net8.0-windows</TargetFramework></PropertyGroup>
+            </Project>
+            """;
+        var result = ProjectConverter.Convert (xml, Options (), ".", addMajorsilenceReferences: false);
+        Assert.DoesNotContain ("Majorsilence.Forms", result.Xml);
+        // Other transforms still apply — the -windows suffix is dropped.
+        Assert.Contains ("<TargetFramework>net8.0</TargetFramework>", result.Xml);
     }
 
     [Fact]
