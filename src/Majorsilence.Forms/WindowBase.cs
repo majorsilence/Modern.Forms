@@ -227,7 +227,7 @@ namespace Majorsilence.Forms
         }
 
         /// <summary>Marks the entire window as needing to be redrawn.</summary>
-        public void Invalidate () => Backend.Invalidate ();
+        public virtual void Invalidate () => Backend.Invalidate ();
 
         /// <summary>Marks the specified portion of the window as needing to be redrawn.</summary>
         public void Invalidate (System.Drawing.Rectangle rectangle) => Invalidate ();
@@ -441,9 +441,16 @@ namespace Majorsilence.Forms
 
         internal virtual void SetWindowStartupLocation (WindowBase? owner = null) { }
 
+        // Lets a subclass (Form) divert Show() into being hosted inside another window — an MDI child is
+        // placed in its parent's MDI client area rather than getting its own top-level OS window.
+        internal virtual bool TryShowHosted () => false;
+
         /// <summary>Displays the window to the user.</summary>
         public void Show ()
         {
+            if (TryShowHosted ())
+                return;
+
             Visible = true;
             OnVisibleChanged (EventArgs.Empty);
 
@@ -492,6 +499,6 @@ namespace Majorsilence.Forms
         public virtual ControlStyle Style { get; } = new ControlStyle (DefaultStyle);
 
         /// <summary>Gets or sets whether the window is displayed to the user.</summary>
-        public bool Visible { get; private set; }
+        public bool Visible { get; internal set; }
     }
 }

@@ -34,6 +34,7 @@ namespace ControlGallery
             tree.Items.Add ("LinkLabel", ImageLoader.Get ("button.png"));
             tree.Items.Add ("ListBox", ImageLoader.Get ("button.png"));
             tree.Items.Add ("ListView", ImageLoader.Get ("button.png"));
+            tree.Items.Add ("MDI", ImageLoader.Get ("button.png"));
             tree.Items.Add ("Menu", ImageLoader.Get ("button.png"));
             tree.Items.Add ("MenuStrip", ImageLoader.Get ("button.png"));
             tree.Items.Add ("MessageBox", ImageLoader.Get ("button.png"));
@@ -122,6 +123,8 @@ namespace ControlGallery
                     return new ListBoxPanel ();
                 case "ListView":
                     return new ListViewPanel ();
+                case "MDI":
+                    return new MdiPanel ();
                 case "Menu":
                     return new MenuPanel ();
                 case "MenuStrip":

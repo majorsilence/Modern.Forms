@@ -21,6 +21,13 @@ namespace Majorsilence.Forms
         private bool show_focus_cues;
         private string text = string.Empty;
         private bool use_system_decorations;
+        private Form? mdi_parent;
+
+        // MDI state. On a container form, MdiClientControl is the client area hosting children. On a child
+        // form, MdiHost is the frame hosting it inside its parent's client (and the child has no on-screen
+        // OS window). Both are null for an ordinary top-level form.
+        internal MdiClient? MdiClientControl;
+        internal MdiChildWindow? MdiHost;
 
         /// <summary>
         /// Initializes a new instance of the Form class.
@@ -79,6 +86,21 @@ namespace Majorsilence.Forms
         /// <inheritdoc/>
         public override void Close ()
         {
+            // An MDI child has no OS window to close — remove its frame from the parent's client instead.
+            if (MdiHost != null) {
+                var args = new CancelEventArgs ();
+                OnClosing (args);
+                if (args.Cancel)
+                    return;
+
+                var host = MdiHost;
+                Application.OpenForms.Remove (this);
+                host.Client.RemoveChild (host);   // clears MdiHost
+                OnBackendClosed ();               // raises Closed
+                FormClosed?.Invoke (this, new FormClosedEventArgs ());
+                return;
+            }
+
             base.Close ();
 
             // If close was cancelled by OnClosing, don't proceed with dialog cleanup
@@ -129,8 +151,11 @@ namespace Majorsilence.Forms
             remove => base.Deactivated -= value;
         }
 
-        /// <summary>Raised when an MDI child form is activated. Stub in Majorsilence.Forms.</summary>
-        public event EventHandler? MdiChildActivate { add { } remove { } }
+        /// <summary>Raised on the MDI container when one of its child forms is activated.</summary>
+        public event EventHandler? MdiChildActivate {
+            add => mdi_child_activate += value;
+            remove => mdi_child_activate -= value;
+        }
 
         /// <summary>Raised when the DPI setting for the form changes. Stub in Majorsilence.Forms.</summary>
         public event EventHandler? DpiChanged { add { } remove { } }
@@ -251,11 +276,16 @@ namespace Majorsilence.Forms
         }
 #pragma warning restore CA1416
 
-        /// <summary>Gets or sets the unscaled location of the control.</summary>
+        /// <summary>
+        /// Gets or sets the unscaled location of the control. For an MDI child this is its position within
+        /// the parent's MDI client area; otherwise it's the window's screen position.
+        /// </summary>
         public new System.Drawing.Point Location {
-            get => Backend.Location;
+            get => MdiHost != null ? new System.Drawing.Point (MdiHost.Left, MdiHost.Top) : Backend.Location;
             set {
-                if (Backend.Location != value)
+                if (MdiHost != null)
+                    MdiHost.Client.MoveChild (MdiHost, value.X, value.Y);
+                else if (Backend.Location != value)
                     Backend.Location = value;
             }
         }
@@ -485,10 +515,18 @@ namespace Majorsilence.Forms
             }
         }
 
-        /// <summary>Gets or sets the unscaled size of the window.</summary>
+        /// <summary>
+        /// Gets or sets the unscaled size of the window. For an MDI child this is the size of its content
+        /// area inside the host frame; otherwise it's the window's client size.
+        /// </summary>
         public new System.Drawing.Size Size {
-            get => Backend.ClientSize;
-            set => Backend.Size = value;
+            get => MdiHost != null ? MdiHost.ContentSize : Backend.ClientSize;
+            set {
+                if (MdiHost != null)
+                    MdiHost.SetContentSize (value);
+                else
+                    Backend.Size = value;
+            }
         }
 
         /// <summary>Gets the currently active form (the most recently focused open form).</summary>
@@ -624,26 +662,104 @@ namespace Majorsilence.Forms
             set => value?.Select ();
         }
 
-        /// <summary>Gets or sets whether the form is an MDI container. Stub — MDI is not supported in Majorsilence.Forms.</summary>
-        public bool IsMdiContainer { get; set; }
+        /// <summary>
+        /// Gets or sets whether the form is an MDI container. Setting this true creates the client area
+        /// that hosts MDI child forms (Majorsilence.Forms emulates MDI by hosting children inside the
+        /// parent's client rather than as native OS windows).
+        /// </summary>
+        public bool IsMdiContainer {
+            get => MdiClientControl != null;
+            set {
+                if (value == (MdiClientControl != null))
+                    return;
 
-        /// <summary>Gets the MDI parent form. Always null in Majorsilence.Forms.</summary>
-        public Form? MdiParent { get; set; }
+                if (value) {
+                    MdiClientControl = new MdiClient { Owner = this };
+                    Controls.Add (MdiClientControl);
+                } else if (MdiClientControl != null) {
+                    Controls.Remove (MdiClientControl);
+                    MdiClientControl = null;
+                }
+            }
+        }
 
-        /// <summary>Gets the MDI child forms. Always empty in Majorsilence.Forms.</summary>
-        public Form[] MdiChildren => [];
+        /// <summary>
+        /// Gets or sets the MDI parent. Set this (and call <see cref="WindowBase.Show"/>) to host this form
+        /// as a child inside <paramref name="value"/>'s MDI client area instead of as a top-level window.
+        /// </summary>
+        public Form? MdiParent {
+            get => mdi_parent;
+            set => mdi_parent = value;
+        }
 
-        /// <summary>Gets whether this form is a child of an MDI container. Always false in Majorsilence.Forms.</summary>
-        public bool IsMdiChild => false;
+        /// <summary>Gets the MDI child forms hosted by this container, in creation order.</summary>
+        public Form[] MdiChildren => MdiClientControl?.ChildForms.ToArray () ?? [];
 
-        /// <summary>Gets the active MDI child form. Always null in Majorsilence.Forms.</summary>
-        public Form? ActiveMdiChild => null;
+        /// <summary>Gets whether this form is hosted as the child of an MDI container.</summary>
+        public bool IsMdiChild => mdi_parent != null;
 
-        /// <summary>Activates the specified MDI child form. Stub in Majorsilence.Forms.</summary>
-        public void ActivateMdiChild (Form? form) { }
+        /// <summary>Gets the active MDI child form, or null.</summary>
+        public Form? ActiveMdiChild => MdiClientControl?.ActiveChild;
 
-        /// <summary>Arranges the MDI child forms. Stub in Majorsilence.Forms.</summary>
-        public void LayoutMdi (MdiLayout value) { }
+        /// <summary>Activates (brings to front and focuses) the specified MDI child form.</summary>
+        public void ActivateMdiChild (Form? form) => MdiClientControl?.Activate (form);
+
+        /// <summary>Arranges the MDI child forms in the given layout (cascade, tile, or arrange icons).</summary>
+        public void LayoutMdi (MdiLayout value) => MdiClientControl?.LayoutMdi (value);
+
+        // ── MDI internals ─────────────────────────────────────────────────────────
+
+        /// <summary>Raises <see cref="MdiChildActivate"/> on the container.</summary>
+        internal void RaiseMdiChildActivate () => mdi_child_activate?.Invoke (this, EventArgs.Empty);
+        private EventHandler? mdi_child_activate;
+
+        /// <summary>Lets a child react to its MDI frame being resized (re-lays out its client area).</summary>
+        internal void RaiseMdiResize () => OnClientLayoutChanged ();
+
+        // The designer-set client size, used to size a child's frame when it's first hosted. Falls back to
+        // a sensible default when the form never set one.
+        internal System.Drawing.Size InitialMdiContentSize {
+            get {
+                var s = Backend.ClientSize;
+                return s.Width > 0 && s.Height > 0 ? s : new System.Drawing.Size (300, 200);
+            }
+        }
+
+        // Configures this form for being hosted as an MDI child: no self-drawn title bar/border (the frame
+        // draws them) and no window-edge resize routing (the frame handles resize).
+        private void PrepareAsMdiChild ()
+        {
+            Resizeable = false;
+            TitleBar.Visible = false;
+            Style.Border.Width = 0;
+        }
+
+        internal override bool TryShowHosted ()
+        {
+            if (mdi_parent?.MdiClientControl is not { } client)
+                return false;
+
+            PrepareAsMdiChild ();
+            client.AddChild (this);
+            Visible = true;
+            Application.OpenForms.Add (this);
+
+            if (!shown) {
+                shown = true;
+                OnShown (EventArgs.Empty);
+            }
+
+            return true;
+        }
+
+        /// <inheritdoc/>
+        public override void Invalidate ()
+        {
+            if (MdiHost != null)
+                MdiHost.Invalidate ();
+            else
+                base.Invalidate ();
+        }
 
         /// <summary>Gets or sets the form that owns this form.</summary>
         public Form? Owner { get; set; }
