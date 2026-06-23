@@ -716,11 +716,15 @@ namespace Majorsilence.Forms
         /// <summary>Lets a child react to its MDI frame being resized (re-lays out its client area).</summary>
         internal void RaiseMdiResize () => OnClientLayoutChanged ();
 
-        // The designer-set client size, used to size a child's frame when it's first hosted. Falls back to
-        // a sensible default when the form never set one.
+        // The designer-set client size, used to size a child's frame when it's first hosted. We read
+        // Backend.Size (the size set via the Size setter) rather than Backend.ClientSize: a hosted child
+        // never owns a realized OS window, so its backend's client size is unreliable before Show — on
+        // some platforms it reports a default/monitor-sized value, which would make the child far too
+        // wide. Backend.Size reflects exactly what was assigned. Falls back to a sensible default when
+        // the form never set one. The MdiClient additionally clamps the frame to the parent's bounds.
         internal System.Drawing.Size InitialMdiContentSize {
             get {
-                var s = Backend.ClientSize;
+                var s = Backend.Size;
                 return s.Width > 0 && s.Height > 0 ? s : new System.Drawing.Size (300, 200);
             }
         }
