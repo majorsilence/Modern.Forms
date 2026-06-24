@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Xml.XPath;
 using Majorsilence.Forms.Automation;
 using Majorsilence.Forms.Headless;
 using Xunit;
@@ -66,6 +67,44 @@ namespace Majorsilence.Forms.Tests
             session.Click (session.FindOrThrow (By.Id ("okButton")));
 
             Assert.Equal (1, clicks);
+        }
+
+        [Fact]
+        public void Find_ByXPath_LocatesElements ()
+        {
+            using var form = BuildForm (out _, out _);
+            HeadlessRenderer.CapturePng (form, 300, 200);
+            var session = new AutomationSession (form);
+
+            // By tag (control type) + attribute predicate.
+            var btn = session.Find (By.XPath ("//Button[@id='okButton']"));
+            Assert.NotNull (btn);
+            Assert.Equal ("okButton", btn!.AutomationId);
+
+            // Attribute-only and descendant forms.
+            Assert.NotNull (session.Find (By.XPath ("//*[@name='OK']")));
+            Assert.NotNull (session.Find (By.XPath ("//TextBox")));
+
+            // No match returns null; multiple matches come back in document order.
+            Assert.Null (session.Find (By.XPath ("//Button[@id='missing']")));
+            Assert.Equal (2, session.FindAll (By.XPath ("//Button | //TextBox")).Count);
+        }
+
+        [Fact]
+        public void GetPageSource_RendersTreeAsXml ()
+        {
+            using var form = BuildForm (out _, out _);
+            HeadlessRenderer.CapturePng (form, 300, 200);
+            var session = new AutomationSession (form);
+
+            var xml = session.GetPageSource ();
+
+            Assert.Contains ("<Button", xml);
+            Assert.Contains ("id=\"okButton\"", xml);
+            Assert.Contains ("<TextBox", xml);
+            // The source is well-formed and queryable by the same XPath used to find elements.
+            var doc = System.Xml.Linq.XDocument.Parse (xml);
+            Assert.NotEmpty (doc.XPathSelectElements ("//Button[@id='okButton']"));
         }
 
         [Fact]
