@@ -52,13 +52,14 @@ namespace Majorsilence.Forms
         {
             _owner = owner;
 
-            // Majorsilence.Forms draws its own decorations (custom chrome) on every platform by default.
+            // Default to custom chrome (Windows/Linux). On macOS the Form constructor switches to the
+            // NATIVE title bar and extends our content up into it (SetSystemDecorations(true) +
+            // SetExtendClientIntoTitleBar), so the OS keeps the traffic lights / rounded corners / shadow.
             WindowDecorations = WindowDecorations.None;
             ExtendClientAreaToDecorationsHint = true;
 
-            // On macOS a borderless window with an extended client area otherwise renders with a
-            // translucent "vibrancy" backdrop (grey/blurry). Force an opaque backdrop so the
-            // custom-drawn title bar and content show correctly.
+            // On macOS, force an opaque backdrop so the extended title-bar area doesn't pick up the
+            // translucent "vibrancy" effect and our content renders solid.
             if (OperatingSystem.IsMacOS ())
                 TransparencyLevelHint = new[] { WindowTransparencyLevel.None };
 
@@ -352,6 +353,14 @@ namespace Majorsilence.Forms
         {
             WindowDecorations = useSystemDecorations ? WindowDecorations.Full : WindowDecorations.None;
             ExtendClientAreaToDecorationsHint = !useSystemDecorations;
+        }
+
+        void Backends.IWindowBackend.SetExtendClientIntoTitleBar (bool extend, int titleBarHeight)
+        {
+            // Keep the native chrome (WindowDecorations.Full) but extend our content up into the title
+            // bar; on macOS this yields the full-size content view with floating traffic lights.
+            ExtendClientAreaToDecorationsHint = extend;
+            ExtendClientAreaTitleBarHeightHint = extend && titleBarHeight > 0 ? titleBarHeight : -1;
         }
 
         void Backends.IWindowBackend.SetCursor (Backends.CursorType cursor) => Cursor = MapCursor (cursor);

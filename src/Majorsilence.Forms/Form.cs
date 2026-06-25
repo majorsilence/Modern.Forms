@@ -21,6 +21,7 @@ namespace Majorsilence.Forms
         private bool show_focus_cues;
         private string text = string.Empty;
         private bool use_system_decorations;
+        private bool extends_content_into_title_bar;
         private Form? mdi_parent;
 
         // MDI state. On a container form, MdiClientControl is the client area hosting children. On a child
@@ -43,7 +44,9 @@ namespace Majorsilence.Forms
 
             // The native-close (Closing) hook is delivered via WindowBase.OnBackendClosing → OnClosing.
 
-            // On macOS defer to the native window chrome (traffic-light buttons, native drag/resize).
+            // Windows/Linux draw fully custom chrome. macOS uses the NATIVE title bar (traffic lights,
+            // rounded corners, shadow). A form that wants to paint into the title bar opts in with
+            // ExtendsContentIntoTitleBar = true (Avalonia 12 full-size content view) — see RadTabbedForm.
             if (OperatingSystem.IsMacOS ())
                 UseSystemDecorations = true;
 
@@ -197,11 +200,14 @@ namespace Majorsilence.Forms
             }
 
             // Logical, window-relative: the title-bar strip inside the border, minus the caption buttons
-            // (close/maximize/minimize stay client area so their clicks reach Majorsilence.Forms).
+            // (close/maximize/minimize stay client area so their clicks reach Majorsilence.Forms). The
+            // buttons sit on the right on Windows/Linux and on the left on macOS (traffic lights), so
+            // shift the draggable region past them on whichever side they occupy.
             var border = CurrentStyle.Border;
-            var left = border.Left.GetWidth ();
             var top = border.Top.GetWidth ();
-            var width = Backend.ClientSize.Width - left - border.Right.GetWidth () - TitleBar.CaptionButtonsWidth;
+            var buttons = TitleBar.CaptionButtonsWidth;
+            var left = border.Left.GetWidth () + (TitleBar.CaptionButtonsOnLeft ? buttons : 0);
+            var width = Backend.ClientSize.Width - border.Left.GetWidth () - border.Right.GetWidth () - buttons;
             var height = TitleBar.Height;
 
             if (width <= 0 || height <= 0) {
@@ -640,11 +646,45 @@ namespace Majorsilence.Forms
 
                 if (use_system_decorations != value) {
                     use_system_decorations = value;
-                    TitleBar.Visible = !use_system_decorations;
                     Style.Border.Width = use_system_decorations ? 0 : 1;
                     Backend.SetSystemDecorations (value);
+                    UpdateTitleBarChrome ();
                 }
             }
+        }
+
+        /// <summary>
+        /// Gets or sets whether the form's content (and its <see cref="TitleBar"/>) is extended up into
+        /// the native OS title bar, so the application can paint into it while the OS keeps drawing the
+        /// native caption buttons, rounded corners and window shadow. Only has an effect together with
+        /// <see cref="UseSystemDecorations"/> (the platform must provide a native title bar — macOS).
+        /// On macOS this is enabled by default. Must be changed before the form is shown.
+        /// </summary>
+        public bool ExtendsContentIntoTitleBar {
+            get => extends_content_into_title_bar;
+            set {
+                if (shown)
+                    throw new InvalidOperationException ($"Cannot change {nameof (ExtendsContentIntoTitleBar)} once a Form has been shown.");
+
+                if (extends_content_into_title_bar != value) {
+                    extends_content_into_title_bar = value;
+                    UpdateTitleBarChrome ();
+                }
+            }
+        }
+
+        // Reconciles the title bar's visibility/overlay mode and the backend's title-bar extension with
+        // the current UseSystemDecorations + ExtendsContentIntoTitleBar combination.
+        private void UpdateTitleBarChrome ()
+        {
+            var extend = use_system_decorations && extends_content_into_title_bar;
+
+            // The custom title bar is shown for fully-custom chrome, or when merged into a native bar.
+            TitleBar.Visible = !use_system_decorations || extend;
+            // In the merged case the OS draws the caption buttons, so the title bar runs in overlay mode.
+            TitleBar.NativeOverlay = extend;
+
+            Backend.SetExtendClientIntoTitleBar (extend, TitleBar.PreferredHeight);
         }
 
         /// <summary>Gets or sets the state of the form (normal/minimized/maximized).</summary>

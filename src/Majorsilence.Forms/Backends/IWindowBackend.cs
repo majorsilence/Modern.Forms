@@ -93,6 +93,16 @@ namespace Majorsilence.Forms.Backends
         /// </summary>
         void SetCaptionRegions (System.Collections.Generic.IReadOnlyList<Rectangle> captionRects) { }
 
+        /// <summary>
+        /// On platforms with a native title bar (macOS), extends the client/content area up into the
+        /// title bar so the application can paint into it while the OS keeps drawing the native caption
+        /// buttons (traffic lights), rounded corners and window shadow — Avalonia 12's
+        /// WindowDecorations.Full + ExtendClientAreaToDecorationsHint. <paramref name="titleBarHeight"/>
+        /// is the logical height of the title-bar strip to reserve (0 = system default). No-op where
+        /// unsupported.
+        /// </summary>
+        void SetExtendClientIntoTitleBar (bool extend, int titleBarHeight) { }
+
         // ── Rendering ────────────────────────────────────────────────────────────
         /// <summary>Marks the window as needing a repaint.</summary>
         void Invalidate ();
