@@ -113,7 +113,10 @@ namespace Majorsilence.Forms.Tests
 
             Theme.ApplyTheme ("Fonts");
 
-            Assert.Equal ("Courier New", Theme.UIFont.FamilyName);
+            // FamilyName is the OS-resolved name; on Linux "Courier New" maps to a fallback
+            // (e.g. "Liberation Mono"). Verify it matches what SkiaSharp returns for that family.
+            var expected = SKTypeface.FromFamilyName ("Courier New")?.FamilyName ?? string.Empty;
+            Assert.Equal (expected, Theme.UIFont.FamilyName);
             Assert.True (Theme.UIFontBold.IsBold);
         }
 
