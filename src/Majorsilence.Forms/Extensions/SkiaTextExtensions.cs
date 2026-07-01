@@ -43,9 +43,7 @@ namespace Majorsilence.Forms
 
             canvas.Save ();
             canvas.Clip (bounds);
-
             tb.Paint (canvas, new SKPoint (location.X, location.Y), options);
-
             canvas.Restore ();
         }
 

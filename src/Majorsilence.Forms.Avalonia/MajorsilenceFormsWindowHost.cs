@@ -44,8 +44,9 @@ namespace Majorsilence.Forms
         private readonly Canvas _overlay;
         private readonly System.Collections.Generic.Dictionary<Majorsilence.Forms.NativeControlHost, Avalonia.Controls.Control> _overlays = new ();
         private DispatcherTimer? _renderTimer;
+        private bool _painting;
+        private bool _invalidatePending;
 
-        // Set by InvalidateVisual() calls so the timer knows to repaint.
         internal bool IsDirty = true;
 
         internal MajorsilenceFormsWindowHost (WindowBase owner)
@@ -145,7 +146,7 @@ namespace Majorsilence.Forms
         private void StartRenderTimer ()
         {
             _renderTimer = new DispatcherTimer (DispatcherPriority.Render) {
-                Interval = TimeSpan.FromMilliseconds (16) // ~60 FPS
+                Interval = TimeSpan.FromMilliseconds (16)
             };
             _renderTimer.Tick += (_, _) => PaintFrame ();
             _renderTimer.Start ();
@@ -176,6 +177,8 @@ namespace Majorsilence.Forms
 
             IsDirty = false;
 
+            _painting = true;
+            _invalidatePending = false;
             try {
                 using var fb = _framebuffer.Lock ();
 
@@ -196,9 +199,15 @@ namespace Majorsilence.Forms
                 _owner.RenderFrame (surface.Canvas, physW, physH, scaling);
             } catch (Exception ex) {
                 Console.Error.WriteLine ($"[MF] PaintFrame error: {ex.Message}");
+            } finally {
+                _painting = false;
             }
 
             _surface.InvalidateVisual ();
+
+            // A control changed state during rendering — mark dirty so the timer picks it up next tick.
+            if (_invalidatePending)
+                IsDirty = true;
         }
 
         // ── Input forwarding ──────────────────────────────────────────────────
@@ -477,7 +486,14 @@ namespace Majorsilence.Forms
             _ => WindowEdge.NorthWest
         });
 
-        void Backends.IWindowBackend.Invalidate () => IsDirty = true;
+        void Backends.IWindowBackend.Invalidate ()
+        {
+            if (_painting) {
+                _invalidatePending = true;
+                return;
+            }
+            IsDirty = true;
+        }
 
         // ── INativeControlHostBackend (native Avalonia controls hosted inside the Majorsilence scene) ─────
 

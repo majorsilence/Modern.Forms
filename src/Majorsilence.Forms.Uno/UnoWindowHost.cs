@@ -40,8 +40,19 @@ namespace Majorsilence.Forms.Uno
 
         private bool PopupMode => _popup is not null;
 
+        // Font warmup runs once — subsequent calls are instant (caches are already populated).
+        private static bool _fontWarmedUp;
+
+        private static void EnsureFontsWarmedUp ()
+        {
+            if (_fontWarmedUp) return;
+            _fontWarmedUp = true;
+            Majorsilence.Forms.Theme.WarmupFonts ();
+        }
+
         public UnoWindowHost (WindowBase owner, bool isPopup, IUnoHostSurface? parentHost)
         {
+            EnsureFontsWarmedUp ();
             _owner = owner;
             _isPopup = isPopup;
             _parentHost = parentHost;
@@ -604,6 +615,7 @@ namespace Majorsilence.Forms.Uno
         // matching the async-invalidation behaviour the Avalonia backend gets for free.
         private bool _painting;
         private bool _invalidatePending;
+        private bool _paintPending;
 
         public void Invalidate ()
         {
@@ -611,8 +623,19 @@ namespace Majorsilence.Forms.Uno
                 _invalidatePending = true;
                 return;
             }
-
-            _canvas.Invalidate ();
+            if (_paintPending)
+                return;
+            _paintPending = true;
+            var dq = _canvas.DispatcherQueue;
+            if (dq is null) {
+                _paintPending = false;
+                _canvas.Invalidate ();
+                return;
+            }
+            dq.TryEnqueue (() => {
+                _paintPending = false;
+                _canvas.Invalidate ();
+            });
         }
 
         private void OnPaintSurface (object? sender, SKPaintSurfaceEventArgs e)
@@ -629,10 +652,10 @@ namespace Majorsilence.Forms.Uno
                 _painting = false;
             }
 
-            // A control changed something that needs redrawing while we were painting. Repaint on the
-            // next tick rather than synchronously, so state settles and we don't re-enter this frame.
+            // A control changed something that needs redrawing while we were painting. Route through
+            // our deferred Invalidate() so _paintPending coalescing still applies.
             if (_invalidatePending)
-                _canvas.DispatcherQueue?.TryEnqueue (() => _canvas.Invalidate ());
+                Invalidate ();
         }
 
         // ── Input ──

@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 using SkiaSharp;
 using Topten.RichTextKit;
 
@@ -9,6 +9,24 @@ namespace Majorsilence.Forms
     /// </summary>
     public static class TextMeasurer
     {
+        // All parameters that uniquely determine a TextBlock's content and layout.
+        private readonly record struct TextBlockKey (
+            string Text,
+            SKTypeface Font,       // compared by SKObject identity (handle equality)
+            int FontSize,
+            int MaxWidth,
+            int MaxHeight,
+            TextAlignment Alignment,
+            uint Color,            // SKColor.Value
+            int MaxLines,          // -1 represents null
+            bool Ellipsis,
+            int MnemonicIndex);
+
+        // Paint-safe TextBlock cache. TextBlock layout is idempotent; Paint() is read-only.
+        // Reusing cached instances eliminates repeated RichTextKit layout on every frame.
+        private static readonly Dictionary<TextBlockKey, TextBlock> _textBlockCache = new (capacity: 512);
+        private const int TBCacheLimit = 2000;
+
         internal static TextBlock CreateTextBlock (string text, SKTypeface font, int fontSize, Size maxSize, TextAlignment alignment = TextAlignment.Auto, SKColor color = new SKColor (), int? maxLines = null, bool ellipsis = false, int mnemonicIndex = -1)
         {
             if (maxLines == 1) {
@@ -16,6 +34,11 @@ namespace Majorsilence.Forms
                 text = text.Replace ("\n", "»");
                 text = text.Replace ("\r", "»");
             }
+
+            var key = new TextBlockKey (text, font, fontSize, maxSize.Width, maxSize.Height, alignment, (uint)color, maxLines ?? -1, ellipsis, mnemonicIndex);
+
+            if (_textBlockCache.TryGetValue (key, out var cached))
+                return cached;
 
             var tb = new TextBlock {
                 MaxWidth = maxLines.GetValueOrDefault () == 1 ? (float?)null : maxSize.Width,
@@ -65,8 +88,18 @@ namespace Majorsilence.Forms
                     tb.MaxHeight *= 2;
             }
 
+            if (_textBlockCache.Count >= TBCacheLimit)
+                _textBlockCache.Clear ();
+
+            _textBlockCache[key] = tb;
             return tb;
         }
+
+        /// <summary>
+        /// Clears the TextBlock layout cache. Call when the theme changes so stale
+        /// color/font entries are not reused.
+        /// </summary>
+        internal static void ClearTextBlockCache () => _textBlockCache.Clear ();
 
         /// <summary>
         /// Finds the next word separator in the specified text.

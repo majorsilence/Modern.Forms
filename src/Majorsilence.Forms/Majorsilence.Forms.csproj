@@ -17,9 +17,6 @@
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
     <!-- Pin HarfBuzz to the SkiaSharp 3.x-aligned versions (overrides RichTextKit's 2.88 transitive). -->
-    <PackageReference Include="SkiaSharp.HarfBuzz" />
-    <PackageReference Include="HarfBuzzSharp" />
-    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <PackageReference Include="Topten.RichTextKit" />
     <PackageReference Include="System.Formats.Nrbf" />

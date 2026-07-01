@@ -29,6 +29,7 @@ namespace Majorsilence.Forms.Uno
         private readonly CursorCanvas _canvas;
         private bool _painting;
         private bool _invalidatePending;
+        private bool _paintPending;
         private readonly System.Collections.Generic.Dictionary<Majorsilence.Forms.NativeControlHost, UIElement> _overlays = new ();
 
         /// <summary>
@@ -121,7 +122,7 @@ namespace Majorsilence.Forms.Uno
             }
 
             if (_invalidatePending)
-                _canvas.DispatcherQueue?.TryEnqueue (() => _canvas.Invalidate ());
+                Invalidate ();
         }
 
         // ── Input ─────────────────────────────────────────────────────────────────
@@ -518,7 +519,19 @@ namespace Majorsilence.Forms.Uno
                 _invalidatePending = true;
                 return;
             }
-            _canvas.Invalidate ();
+            if (_paintPending)
+                return;
+            _paintPending = true;
+            var dq = _canvas.DispatcherQueue;
+            if (dq is null) {
+                _paintPending = false;
+                _canvas.Invalidate ();
+                return;
+            }
+            dq.TryEnqueue (() => {
+                _paintPending = false;
+                _canvas.Invalidate ();
+            });
         }
 
         // ── File/folder pickers (best-effort; embedded heads may require a window handle we don't own) ──

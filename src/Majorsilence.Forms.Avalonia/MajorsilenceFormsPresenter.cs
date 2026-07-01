@@ -42,8 +42,10 @@ namespace Majorsilence.Forms
     {
         private readonly HostedSurface _host;
         private WriteableBitmap? _framebuffer;
-        private DispatcherTimer? _renderTimer;
         private bool _dirty = true;
+        private bool _renderPending;
+        private bool _painting;
+        private bool _invalidatePending;
         private readonly Dictionary<NativeControlHost, AvControl> _overlays = new ();
 
         // The Majorsilence scene is drawn into this Image (a hit-test-invisible bottom child) since Panel.Render
@@ -118,21 +120,30 @@ namespace Majorsilence.Forms
             if (SyncTheme)
                 MajorsilenceFormsTheme.FollowHost ();
 
-            _renderTimer = new DispatcherTimer (DispatcherPriority.Render) {
-                Interval = TimeSpan.FromMilliseconds (16) // ~60 FPS
-            };
-            _renderTimer.Tick += (_, _) => PaintFrame ();
-            _renderTimer.Start ();
+            // Trigger the initial paint now that we have layout/scale information.
+            ScheduleRender ();
         }
 
         /// <inheritdoc/>
         protected override void OnDetachedFromVisualTree (VisualTreeAttachmentEventArgs e)
         {
-            _renderTimer?.Stop ();
-            _renderTimer = null;
+            _renderPending = false;
             _framebuffer?.Dispose ();
             _framebuffer = null;
             base.OnDetachedFromVisualTree (e);
+        }
+
+        // Schedules one PaintFrame on the next render-priority dispatcher tick.
+        // _renderPending coalesces concurrent Invalidate() calls into a single repaint.
+        private void ScheduleRender ()
+        {
+            if (_renderPending)
+                return;
+            _renderPending = true;
+            Dispatcher.UIThread.Post (() => {
+                _renderPending = false;
+                PaintFrame ();
+            }, DispatcherPriority.Render);
         }
 
         // ── Rendering ─────────────────────────────────────────────────────────────
@@ -174,6 +185,8 @@ namespace Majorsilence.Forms
 
             _dirty = false;
 
+            _painting = true;
+            _invalidatePending = false;
             try {
                 using var fb = _framebuffer.Lock ();
                 var info = new SKImageInfo (fb.Size.Width, fb.Size.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
@@ -189,6 +202,8 @@ namespace Majorsilence.Forms
                 _host.RenderFrame (surface.Canvas, fb.Size.Width, fb.Size.Height, Scale);
             } catch (Exception ex) {
                 Console.Error.WriteLine ($"[CF] Presenter PaintFrame error: {ex.Message}");
+            } finally {
+                _painting = false;
             }
 
             // Present the framebuffer through the bottom Image child (sized to the presenter), and keep any
@@ -197,6 +212,9 @@ namespace Majorsilence.Forms
             _surface.Height = Bounds.Height;
             _surface.Source = _framebuffer;
             _surface.InvalidateVisual ();
+
+            if (_invalidatePending)
+                ScheduleRender ();
         }
 
         // ── Input forwarding (Avalonia → Majorsilence.Forms; positions scaled to physical pixels) ───────
@@ -371,7 +389,15 @@ namespace Majorsilence.Forms
 
         void IWindowBackend.BeginResizeDrag (Backends.WindowEdge edge) { /* not resizable */ }
 
-        void IWindowBackend.Invalidate () => _dirty = true;
+        void IWindowBackend.Invalidate ()
+        {
+            if (_painting) {
+                _invalidatePending = true;
+                return;
+            }
+            _dirty = true;
+            ScheduleRender ();
+        }
 
         // ── INativeControlHostBackend (native Avalonia controls hosted inside the Majorsilence scene) ─────
 

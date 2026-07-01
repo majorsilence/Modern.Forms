@@ -14,14 +14,38 @@ namespace Majorsilence.Forms
         private static readonly object _lock = new ();
         private static readonly ConcurrentDictionary<string, object> values = new ();
 
+        // On Linux/macOS "Segoe UI Emoji" resolves to "Noto Color Emoji" via fontconfig — an emoji-
+        // only font with no Latin glyphs. Every character then triggers a per-glyph fallback search,
+        // making the first text render take ~1 second. Use "sans-serif" on non-Windows so fontconfig
+        // maps it directly to a proper UI font (e.g. "Noto Sans").
+        private static readonly string _uiFontFamily =
+            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform (System.Runtime.InteropServices.OSPlatform.Windows)
+                ? "Segoe UI Emoji"
+                : "sans-serif";
+
         static Theme ()
         {
             SetBuiltInTheme (BuiltInTheme.Default);
 
-            values[nameof (UIFont)] = SKTypeface.FromFamilyName ("Segoe UI Emoji", SKFontStyleWeight.Normal, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
-            values[nameof (UIFontBold)] = SKTypeface.FromFamilyName ("Segoe UI Emoji", SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
+            values[nameof (UIFont)] = SKTypeface.FromFamilyName (_uiFontFamily, SKFontStyleWeight.Normal, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
+            values[nameof (UIFontBold)] = SKTypeface.FromFamilyName (_uiFontFamily, SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
             values[nameof (FontSize)] = 14;
             values[nameof (ItemFontSize)] = 12;
+        }
+
+        /// <summary>
+        /// Pre-loads fonts into both the fontconfig cache (via SkiaSharp) and the RichTextKit
+        /// FontMapper cache (via a dummy text measure). Call once on the UI thread at startup to
+        /// prevent slow first-render delays. Safe to call multiple times — subsequent calls are
+        /// instant because both caches are already populated.
+        /// </summary>
+        internal static void WarmupFonts ()
+        {
+            var font = UIFont;
+            var bold = UIFontBold;
+            var size = FontSize;
+            if (font is not null) TextMeasurer.MeasureText ("A", font, size);
+            if (bold is not null) TextMeasurer.MeasureText ("A", bold, size);
         }
 
         /// <summary>
@@ -290,6 +314,7 @@ namespace Majorsilence.Forms
 
         private static void InvokeThemeChanged ()
         {
+            TextMeasurer.ClearTextBlockCache ();
             ThemeChanged?.Invoke (null, EventArgs.Empty);
             Application.DoThemeChanged ();
         }

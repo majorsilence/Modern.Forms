@@ -20,6 +20,10 @@ namespace Majorsilence.Forms.Backends
         {
             AvaloniaBootstrap.EnsureInitialized ();
             AvaloniaSynchronizationContext.InstallIfNeeded ();
+            // Pre-load fonts synchronously on the UI thread so the first render is fast.
+            // fontconfig is not thread-safe; doing this here (not on a background thread) avoids
+            // lock contention with the render loop.
+            Majorsilence.Forms.Theme.WarmupFonts ();
         }
 
         /// <inheritdoc/>
