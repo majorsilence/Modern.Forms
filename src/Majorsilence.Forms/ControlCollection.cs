@@ -5,6 +5,7 @@
 using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Drawing;
 using System.Globalization;
 using Majorsilence.Forms.Layout;
 
@@ -199,6 +200,51 @@ public partial class Control
                 if (implicit_control_list[i].NeedsPaint) return true;
 
             return false;
+        }
+
+        // Returns true if any control (explicit or implicit) has mouse capture.
+        internal bool AnyCaptured ()
+        {
+            for (var i = 0; i < control_list.Count; i++)
+                if (control_list[i].Capture) return true;
+
+            for (var i = 0; i < implicit_control_list.Count; i++)
+                if (implicit_control_list[i].Capture) return true;
+
+            return false;
+        }
+
+        // Returns the topmost child (last in z-order) that has mouse capture, without allocating.
+        // Matches the semantics of GetAllControls().LastOrDefault(c => c.Capture).
+        internal Control? FindCapturedChild ()
+        {
+            for (var i = implicit_control_list.Count - 1; i >= 0; i--)
+                if (implicit_control_list[i].Capture) return implicit_control_list[i];
+
+            for (var i = control_list.Count - 1; i >= 0; i--)
+                if (control_list[i].Capture) return control_list[i];
+
+            return null;
+        }
+
+        // Returns the topmost visible child that can receive mouse events at the given point,
+        // without allocating. Matches GetAllControls().LastOrDefault(c => c.Visible && receives && contains).
+        // Searches from the end of each list (highest z-order first) for early return.
+        internal Control? FindVisibleChildAt (Point location)
+        {
+            for (var i = implicit_control_list.Count - 1; i >= 0; i--) {
+                var c = implicit_control_list[i];
+                if (c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (location))
+                    return c;
+            }
+
+            for (var i = control_list.Count - 1; i >= 0; i--) {
+                var c = control_list[i];
+                if (c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (location))
+                    return c;
+            }
+
+            return null;
         }
 
         internal IEnumerable<Control> GetAllControls (bool includeImplicit = true)

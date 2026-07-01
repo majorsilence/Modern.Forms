@@ -161,7 +161,7 @@ namespace Majorsilence.Forms
         /// Gets or sets a value indicating the control is currently getting system mouse events.
         /// </summary>
         public bool Capture {
-            get => is_captured || Controls.GetAllControls (true).Any (c => c.Capture);
+            get => is_captured || Controls.AnyCaptured ();
             set {
                 is_captured = value;
 
@@ -1120,8 +1120,8 @@ namespace Majorsilence.Forms
         /// <param name="e">A PaintEventArgs that contains the event data.</param>
         protected virtual void OnPaint (PaintEventArgs e)
         {
-            foreach (var control in Controls.GetAllControls ().Where (c => c.Visible).ToArray ()) {
-                if (control.Width <= 0 || control.Height <= 0)
+            foreach (var control in Controls.GetAllControls ()) {
+                if (!control.Visible || control.Width <= 0 || control.Height <= 0)
                     continue;
 
                 var info = new SKImageInfo (control.ScaledSize.Width, control.ScaledSize.Height, SKImageInfo.PlatformColorType, SKAlphaType.Premul);
@@ -1344,14 +1344,14 @@ namespace Majorsilence.Forms
         internal void RaiseClick (MouseEventArgs e)
         {
             // If something has the mouse captured, they get all the events
-            var captured = Controls.GetAllControls ().LastOrDefault (c => c.Capture);
+            var captured = Controls.FindCapturedChild ();
 
             if (captured != null) {
                 captured.RaiseClick (TranslateMouseEvents (e, captured));
                 return;
             }
 
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (child != null)
                 child.RaiseClick (TranslateMouseEvents (e, child));
@@ -1365,14 +1365,14 @@ namespace Majorsilence.Forms
         internal void RaiseDoubleClick (MouseEventArgs e)
         {
             // If something has the mouse captured, they get all the events
-            var captured = Controls.GetAllControls ().LastOrDefault (c => c.Capture);
+            var captured = Controls.FindCapturedChild ();
 
             if (captured != null) {
                 captured.RaiseDoubleClick (TranslateMouseEvents (e, captured));
                 return;
             }
 
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (child != null)
                 child.RaiseDoubleClick (TranslateMouseEvents (e, child));
@@ -1433,7 +1433,7 @@ namespace Majorsilence.Forms
         /// </summary>
         internal void RaiseMouseDown (MouseEventArgs e)
         {
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (child != null)
                 child.RaiseMouseDown (TranslateMouseEvents (e, child));
@@ -1474,7 +1474,7 @@ namespace Majorsilence.Forms
         /// </summary>
         internal void RaiseMouseEnter (MouseEventArgs e)
         {
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (child != null)
                 child.RaiseMouseEnter (TranslateMouseEvents (e, child));
@@ -1502,14 +1502,14 @@ namespace Majorsilence.Forms
         internal void RaiseMouseMove (MouseEventArgs e)
         {
             // If something has the mouse captured, they get all the events
-            var captured = Controls.GetAllControls ().LastOrDefault (c => c.Capture);
+            var captured = Controls.FindCapturedChild ();
 
             if (captured != null) {
                 captured.RaiseMouseMove (TranslateMouseEvents (e, captured));
                 return;
             }
 
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (current_mouse_in != null && current_mouse_in != child) {
                 current_mouse_in.RaiseMouseLeave (e);
@@ -1538,14 +1538,14 @@ namespace Majorsilence.Forms
         internal void RaiseMouseUp (MouseEventArgs e)
         {
             // If something has the mouse captured, they get all the events
-            var captured = Controls.GetAllControls ().LastOrDefault (c => c.Capture);
+            var captured = Controls.FindCapturedChild ();
 
             if (captured != null) {
                 captured.RaiseMouseUp (TranslateMouseEvents (e, captured));
                 return;
             }
 
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (child != null)
                 child.RaiseMouseUp (TranslateMouseEvents (e, child));
@@ -1562,7 +1562,7 @@ namespace Majorsilence.Forms
         /// </summary>
         internal void RaiseMouseWheel (MouseEventArgs e)
         {
-            var child = Controls.GetAllControls ().LastOrDefault (c => c.Visible && c.GetControlBehavior (ControlBehaviors.ReceivesMouseEvents) && c.ScaledBounds.Contains (e.Location));
+            var child = Controls.FindVisibleChildAt (e.Location);
 
             if (child != null)
                 child.RaiseMouseWheel (TranslateMouseEvents (e, child));
