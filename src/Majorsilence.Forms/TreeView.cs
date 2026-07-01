@@ -19,6 +19,9 @@ namespace Majorsilence.Forms
         private bool virtual_mode;
         private readonly VerticalScrollBar vscrollbar;
 
+        // Reused across paints to avoid per-frame List<> allocation.
+        private readonly List<TreeViewItem> _layoutItems = new ();
+
         private static readonly object s_drawNode = new object ();
 
         /// <summary>
@@ -162,7 +165,15 @@ namespace Majorsilence.Forms
         /// <summary>
         /// Returns the TreeViewItem at the specified location.
         /// </summary>
-        public TreeViewItem? GetItemAtLocation (Point location) => root_item.GetVisibleItems ().FirstOrDefault (tp => tp.Bounds.Contains (location));
+        public TreeViewItem? GetItemAtLocation (Point location)
+        {
+            // Use the already-laid-out list from the most recent LayoutItems() call instead of
+            // re-traversing the whole visible tree.
+            for (var i = 0; i < _layoutItems.Count; i++)
+                if (_layoutItems[i].Bounds.Contains (location)) return _layoutItems[i];
+
+            return null;
+        }
 
         // Enumerates through every visible TreeViewItem. Note items may not be in the currently shown part.
         internal IEnumerable<TreeViewItem> GetVisibleItems (bool skipOffscreen = false) => root_item.GetVisibleItems ().Skip (1 + (skipOffscreen ? top_index : 0));
@@ -393,20 +404,38 @@ namespace Majorsilence.Forms
             return null;
         }
 
-        // Runs a layout pass on all TreeViewItems.
+        // The items laid out by the most recent LayoutItems() call.
+        // Exposed internally so the renderer can use it without a separate tree traversal.
+        internal IReadOnlyList<TreeViewItem> LayoutedItems => _layoutItems;
+
+        // Runs a layout pass on all visible TreeViewItems.
+        // Single tree traversal: simultaneously counts all visible items (for the scrollbar) and
+        // collects the items on the current page (for layout and rendering).
         private List<TreeViewItem> LayoutItems ()
         {
-            UpdateVerticalScrollBar ();
+            _layoutItems.Clear ();
 
-            var visible_items = root_item.GetVisibleItems ().Skip (1 + top_index).ToList ();  // Skip the root element
+            int totalVisible = 0;    // all visible nodes excluding root
+            foreach (var item in root_item.GetVisibleItems ()) {
+                if (totalVisible == 0) { totalVisible++; continue; }  // skip the synthetic root
+
+                // Items below the scroll offset are still counted but not added to the page.
+                if (totalVisible > top_index)
+                    _layoutItems.Add (item);
+
+                totalVisible++;
+            }
+
+            UpdateVerticalScrollBar (totalVisible - 1);  // -1 to exclude root
+
             var client_rect = ClientRectangle;
 
             if (vscrollbar.Visible)
                 client_rect.Width -= (client_rect.Width - vscrollbar.ScaledLeft + 1);
 
-            StackLayoutEngine.VerticalExpand.Layout (client_rect, visible_items.Cast<ILayoutable> ());
+            StackLayoutEngine.VerticalExpand.Layout (client_rect, _layoutItems.Cast<ILayoutable> ());
 
-            return visible_items;
+            return _layoutItems;
         }
 
         /// <summary>
@@ -719,25 +748,28 @@ namespace Majorsilence.Forms
         /// <inheritdoc/>
         public override TreeViewControlStyle Style { get; } = new TreeViewControlStyle (DefaultStyle);
 
-        // Determines scrollbar visibility and scrollbar values.
-        private void UpdateVerticalScrollBar ()
+        // Determines scrollbar visibility and values using a pre-computed visible child count.
+        // Called from LayoutItems() after the single-pass traversal to avoid a second traversal.
+        private void UpdateVerticalScrollBar (int childCount)
         {
-            if (Items.Count == 0)
-                vscrollbar.Visible = false;
-
-            // See if we need more height than we have.
-            if (ScaledItemHeight * root_item.GetVisibleChildrenCount () > ScaledHeight) {
-                if (!vscrollbar.Visible)
-                    vscrollbar.Value = 0;
-
-                vscrollbar.Visible = true;
-                vscrollbar.Maximum = root_item.GetVisibleChildrenCount () - VisibleItemCount;
-                vscrollbar.LargeChange = Math.Max (0, VisibleItemCount);
-            } else {
+            if (Items.Count == 0 || ScaledItemHeight * childCount <= ScaledHeight) {
                 vscrollbar.Visible = false;
                 top_index = 0;
+                return;
             }
+
+            if (!vscrollbar.Visible)
+                vscrollbar.Value = 0;
+
+            vscrollbar.Visible = true;
+            vscrollbar.Maximum = childCount - VisibleItemCount;
+            vscrollbar.LargeChange = Math.Max (0, VisibleItemCount);
         }
+
+        // Determines scrollbar visibility and scrollbar values.
+        // Used by SetBoundsCore (resize) — traverses the tree to get the count.
+        private void UpdateVerticalScrollBar ()
+            => UpdateVerticalScrollBar (root_item.GetVisibleChildrenCount ());
 
         // Handles scrollbar scrolling.
         private void VerticalScrollBar_ValueChanged (object? sender, EventArgs e)

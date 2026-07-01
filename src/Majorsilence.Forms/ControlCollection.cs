@@ -188,6 +188,19 @@ public partial class Control
             }
         }
 
+        // Returns true if any control (explicit or implicit) needs painting.
+        // Iterates both lists without allocating a combined enumerable.
+        internal bool AnyNeedsPaint ()
+        {
+            for (var i = 0; i < control_list.Count; i++)
+                if (control_list[i].NeedsPaint) return true;
+
+            for (var i = 0; i < implicit_control_list.Count; i++)
+                if (implicit_control_list[i].NeedsPaint) return true;
+
+            return false;
+        }
+
         internal IEnumerable<Control> GetAllControls (bool includeImplicit = true)
         {
             if (includeImplicit)

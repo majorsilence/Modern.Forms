@@ -925,7 +925,7 @@ namespace Majorsilence.Forms
         /// <summary>
         /// Whether the control needs to be repainted.
         /// </summary>
-        internal bool NeedsPaint => GetState (States.IsDirty) || Controls.GetAllControls ().Any (c => c.NeedsPaint);
+        internal bool NeedsPaint => GetState (States.IsDirty) || Controls.AnyNeedsPaint ();
 
         /// <summary>
         /// The full control canvas.

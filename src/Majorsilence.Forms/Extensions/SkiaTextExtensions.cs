@@ -9,7 +9,7 @@ namespace Majorsilence.Forms
     /// </summary>
     public static class SkiaTextExtensions
     {
-        private static TextPaintOptions CreateOptions () => new TextPaintOptions { Edging = SKFontEdging.SubpixelAntialias };
+        private static readonly TextPaintOptions _defaultPaintOptions = new TextPaintOptions { Edging = SKFontEdging.SubpixelAntialias };
 
         /// <summary>
         /// Draws a string of text.
@@ -34,11 +34,15 @@ namespace Majorsilence.Forms
             else if (vertical == SKTextAlign.Center)
                 location.Y += (bounds.Height - (int)tb.MeasuredHeight) / 2;
 
-            var options = CreateOptions ();
-
+            TextPaintOptions options;
             if (selectionStart >= 0 && selectionEnd >= 0 && selectionStart != selectionEnd) {
-                options.Selection = new TextRange (selectionStart, selectionEnd);
-                options.SelectionColor = selectionColor ?? Theme.TextSelectionBackgroundColor;
+                options = new TextPaintOptions {
+                    Edging = SKFontEdging.SubpixelAntialias,
+                    Selection = new TextRange (selectionStart, selectionEnd),
+                    SelectionColor = selectionColor ?? Theme.TextSelectionBackgroundColor
+                };
+            } else {
+                options = _defaultPaintOptions;
             }
 
             canvas.Save ();
@@ -73,7 +77,7 @@ namespace Majorsilence.Forms
 
             canvas.Save ();
             canvas.Clip (bounds);
-            tb.Paint (canvas, new SKPoint (location.X, location.Y), CreateOptions ());
+            tb.Paint (canvas, new SKPoint (location.X, location.Y), _defaultPaintOptions);
             canvas.Restore ();
         }
 
@@ -82,11 +86,16 @@ namespace Majorsilence.Forms
         /// </summary>
         public static void DrawTextBlock (this SKCanvas canvas, TextBlock block, Point location, TextSelection selection)
         {
-            var options = CreateOptions ();
+            TextPaintOptions options;
 
             if (!selection.IsEmpty ()) {
-                options.Selection = new TextRange (selection.Start, selection.End);
-                options.SelectionColor = selection.Color;
+                options = new TextPaintOptions {
+                    Edging = SKFontEdging.SubpixelAntialias,
+                    Selection = new TextRange (selection.Start, selection.End),
+                    SelectionColor = selection.Color
+                };
+            } else {
+                options = _defaultPaintOptions;
             }
 
             block.Paint (canvas, new SKPoint (location.X, location.Y), options);

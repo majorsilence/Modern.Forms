@@ -39,8 +39,8 @@ namespace Majorsilence.Forms
             var form_x = (int)(form_border.Left.GetWidth () * scaling);
             var form_y = (int)(form_border.Top.GetWidth ()  * scaling);
 
-            foreach (var control in Controls.GetAllControls ().Where (c => c.Visible).ToArray ()) {
-                if (control.Width <= 0 || control.Height <= 0)
+            foreach (var control in Controls.GetAllControls ()) {
+                if (!control.Visible || control.Width <= 0 || control.Height <= 0)
                     continue;
 
                 var info = new SKImageInfo (control.ScaledSize.Width, control.ScaledSize.Height, SKImageInfo.PlatformColorType, SKAlphaType.Premul);

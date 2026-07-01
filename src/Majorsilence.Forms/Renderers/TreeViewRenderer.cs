@@ -26,10 +26,13 @@ namespace Majorsilence.Forms.Renderers
             e.Canvas.Save ();
             e.Canvas.Clip (control.ClientRectangle);
 
+            // LayoutedItems is populated by TreeView.LayoutItems() before Render is called.
+            // Using it avoids a second tree traversal on every paint.
             var visible_item_count = control.ScaledHeight / control.ScaledItemHeight;
+            var items = control.LayoutedItems;
 
-            foreach (var item in control.GetVisibleItems (true).Take (visible_item_count + 1))
-                RenderItem (control, item, e);
+            for (var i = 0; i < items.Count && i <= visible_item_count; i++)
+                RenderItem (control, items[i], e);
 
             e.Canvas.Restore ();
         }
